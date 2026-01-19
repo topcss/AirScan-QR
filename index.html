@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>跨网传输助手（AirScan-QR）</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
+        .qr-canvas-wrapper { display: flex; justify-content: center; padding: 20px; background: white; border-radius: 24px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); }
+        canvas#qr-canvas { width: 100% !important; max-width: 350px; height: auto !important; }
+        .dot { width: calc(10% - 4.5px); aspect-ratio: 1; border-radius: 4px; background: #f1f5f9; transition: all 0.2s; }
+        .dot.received { background: #10b981; box-shadow: 0 0 8px rgba(16,185,129,0.3); }
+        .missing-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; padding: 6px; background: #fff1f2; color: #e11d48; border-radius: 10px; font-size: 13px; font-weight: 800; margin: 4px; border: 1px solid #ffe4e6; cursor: pointer; }
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 8px; background: #e2e8f0; border-radius: 4px; }
+        input[type=range]::-webkit-slider-thumb { height: 26px; width: 26px; border-radius: 50%; background: #2563eb; -webkit-appearance: none; margin-top: -9px; border: 2px solid white; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen text-slate-900 pb-20">
+
+<div class="max-w-xl mx-auto px-4 pt-8">
+    <div class="flex justify-between items-center mb-8">
+        <h1 class="text-2xl font-black text-slate-800 tracking-tighter">QR 传输专家</h1>
+        <div class="bg-gray-200 p-1 rounded-2xl flex text-sm font-bold shadow-inner">
+            <button id="tab-s" onclick="switchTab('send')" class="px-6 py-2 rounded-xl bg-white shadow-sm text-blue-600 transition-all">发送</button>
+            <button id="tab-r" onclick="switchTab('receive')" class="px-6 py-2 rounded-xl text-slate-500 transition-all">接收</button>
+        </div>
+    </div>
+
+    <div id="panel-send" class="space-y-4">
+        <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
+            <div class="relative">
+                <textarea id="inputText" class="w-full p-5 bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl h-32 focus:border-blue-500 outline-none text-sm" placeholder="输入内容..."></textarea>
+                <div id="fileCard" class="hidden absolute inset-0 bg-white border-2 border-blue-50 flex flex-col items-center justify-center p-4 rounded-2xl">
+                    <p id="f-name" class="text-sm font-bold text-blue-600 text-center px-6 mb-2 w-full break-all"></p>
+                    <button onclick="resetFile()" class="text-xs font-bold text-red-500 underline uppercase">取消文件</button>
+                </div>
+            </div>
+            <div class="mt-4 space-y-4 px-2">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-bold text-slate-500">速度: <span id="fpsVal" class="text-blue-600 font-mono">12</span> FPS</span>
+                    <input type="range" id="fpsRange" min="1" max="30" value="12" class="w-1/2" oninput="state.fps=this.value; document.getElementById('fpsVal').innerText=this.value; if(state.isSending) restartTimer();">
+                </div>
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-bold text-slate-500">单帧: <span id="sizeVal" class="text-indigo-600 font-mono">350</span> BYTE</span>
+                    <input type="range" id="sizeRange" min="200" max="800" step="10" value="350" class="w-1/2" oninput="state.chunkSize=this.value; document.getElementById('sizeVal').innerText=this.value; if(state.isSending) prepareSending(true);">
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-4 mt-6">
+                <button onclick="document.getElementById('fileInput').click()" class="py-4 bg-gray-100 rounded-2xl font-bold text-sm">📎 选文件</button>
+                <input type="file" id="fileInput" class="hidden">
+                <button onclick="prepareSending()" class="py-4 bg-blue-600 text-white rounded-2xl font-bold text-sm shadow-xl active:scale-95 transition-all">🚀 开始发送</button>
+            </div>
+        </div>
+        <div id="playerBox" class="hidden bg-white p-6 rounded-[2.5rem] shadow-2xl border border-gray-50">
+            <div class="text-center mb-6">
+                <div class="text-5xl font-mono font-black text-slate-900">
+                    <span id="curFrameNum" class="text-blue-600">0</span><span class="text-gray-200">/</span><span id="totalFrameNum">0</span>
+                </div>
+            </div>
+            <div class="qr-canvas-wrapper"><canvas id="qr-canvas"></canvas></div>
+            <div class="mt-10 space-y-8">
+                <input type="range" id="frameSlider" min="0" max="0" value="0" class="w-full" oninput="manualSeek(this.value)">
+                <div class="flex gap-4">
+                    <button onclick="step(-1)" class="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center">◀</button>
+                    <button id="btnPause" onclick="togglePause()" class="flex-1 bg-slate-900 text-white rounded-2xl font-black uppercase text-sm">暂停 / 播放</button>
+                    <button onclick="step(1)" class="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center">▶</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="panel-receive" class="hidden space-y-4">
+        <div class="bg-white p-6 rounded-[2rem] shadow-sm">
+            <div id="reader" class="w-full aspect-square rounded-3xl bg-slate-900 overflow-hidden mb-6"></div>
+            <div class="grid grid-cols-2 gap-4 mb-8">
+                <button id="btnScan" onclick="toggleScan()" class="py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg">开始扫码</button>
+                <button onclick="location.reload()" class="py-4 bg-gray-100 text-slate-500 rounded-2xl font-bold">重置</button>
+            </div>
+            <div class="space-y-4">
+                <div id="taskInfo" class="hidden p-4 bg-blue-50 rounded-2xl border border-blue-100">
+                    <p class="text-[10px] font-black text-blue-400 mb-1 uppercase">当前文件名</p>
+                    <p id="recvFileName" class="text-sm font-bold text-blue-800 break-all"></p>
+                </div>
+                <div class="p-5 bg-red-50 rounded-3xl border border-red-100">
+                    <div class="flex justify-between items-center mb-4">
+                        <span class="text-xs font-black text-red-400 uppercase">进度统计</span>
+                        <span id="recvStats" class="bg-red-200 text-red-700 px-3 py-1 rounded-full text-xs font-bold font-mono">0/0</span>
+                    </div>
+                    <div id="missingList" class="flex flex-wrap text-slate-300 text-xs italic">— 待扫码 —</div>
+                </div>
+                <div id="recvGrid" class="flex flex-wrap gap-1.5"></div>
+            </div>
+        </div>
+        <div id="successCard" class="hidden bg-emerald-600 p-8 rounded-[2.5rem] text-white shadow-2xl text-center">
+            <p id="res-name-full" class="text-xs font-bold opacity-80 mb-6 break-all"></p>
+            <button id="dlBtn" class="w-full py-5 bg-white text-emerald-700 rounded-2xl font-black shadow-lg">立即下载文件</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let state = { isSending: false, isPaused: false, frameIdx: 0, chunks: [], fileName: "", fps: 12, chunkSize: 350, timer: null, tid: "", rawData: null, qr: null };
+let recv = { active: false, scanner: null, received: {}, total: 0, tid: "", startTime: 0, fileName: "" };
+
+window.onload = () => {
+    state.qr = new QRious({ element: document.getElementById('qr-canvas'), size: 350, level: 'L' });
+};
+
+// 核心：将完整文件名放在每一帧协议中（确保接收端随时介入都能拿到名字）
+function renderFrame() {
+    if (state.chunks.length === 0) return;
+    const cur = state.frameIdx;
+    document.getElementById('curFrameNum').innerText = cur + 1;
+    document.getElementById('totalFrameNum').innerText = state.chunks.length;
+    document.getElementById('frameSlider').max = state.chunks.length - 1;
+    document.getElementById('frameSlider').value = cur;
+
+    // 协议：TID | 完整文件名 | 总帧数 | 索引 | 数据
+    const payload = [state.tid, state.fileName, state.chunks.length, cur, state.chunks[cur]].join("|");
+    state.qr.value = payload;
+}
+
+function prepareSending(isAuto = false) {
+    if(!isAuto) clearInterval(state.timer);
+    const text = document.getElementById('inputText').value;
+    let b64 = state.rawData || (text ? btoa(unescape(encodeURIComponent(text))) : "");
+    if (!b64) return isAuto ? null : alert("请先输入内容或选择文件");
+    if(!isAuto) {
+        state.tid = Math.random().toString(36).substring(2, 5).toUpperCase();
+        state.frameIdx = 0;
+    }
+    state.fileName = state.fileName || "unnamed_file.txt";
+    state.chunks = [];
+    const size = parseInt(state.chunkSize);
+    for (let i = 0; i < b64.length; i += size) {
+        state.chunks.push(b64.substring(i, i + size));
+    }
+    state.isSending = true;
+    document.getElementById('playerBox').classList.remove('hidden');
+    renderFrame();
+    if(!isAuto) restartTimer();
+}
+
+function restartTimer() {
+    clearInterval(state.timer);
+    state.timer = setInterval(() => {
+        if(state.isPaused) return;
+        state.frameIdx = (state.frameIdx + 1) % state.chunks.length;
+        renderFrame();
+    }, 1000 / state.fps);
+}
+
+// 接收端逻辑
+async function toggleScan() {
+    if(recv.active) { await recv.scanner.stop(); recv.active = false; document.getElementById('btnScan').innerText="开始扫码"; }
+    else {
+        recv.scanner = new Html5Qrcode("reader");
+        await recv.scanner.start({ facingMode: "environment" }, { fps: 25 }, (text) => {
+            const p = text.split('|'); if(p.length < 5) return;
+            const [tid, fullFileName, total, idx, data] = [p[0], p[1], parseInt(p[2]), parseInt(p[3]), p[4]];
+            
+            if(tid !== recv.tid) {
+                recv.tid = tid; recv.total = total; recv.received = {}; recv.startTime = Date.now();
+                recv.fileName = fullFileName;
+                document.getElementById('taskInfo').classList.remove('hidden');
+                document.getElementById('recvFileName').innerText = fullFileName;
+                document.getElementById('recvGrid').innerHTML = '';
+                for(let i=0; i<total; i++) {
+                    const d = document.createElement('div'); d.id = `dot-${i}`; d.className = 'dot';
+                    document.getElementById('recvGrid').appendChild(d);
+                }
+            }
+            if(!recv.received[idx]) {
+                recv.received[idx] = data;
+                document.getElementById(`dot-${idx}`).classList.add('received');
+                updateMissingUI();
+                if(Object.keys(recv.received).length === total) finalize();
+            }
+        });
+        recv.active = true; document.getElementById('btnScan').innerText="停止扫码";
+    }
+}
+
+function updateMissingUI() {
+    const missing = [];
+    for(let i=0; i<recv.total; i++) { if(!recv.received[i]) missing.push(i + 1); }
+    document.getElementById('recvStats').innerText = `${Object.keys(recv.received).length}/${recv.total}`;
+    const listEl = document.getElementById('missingList');
+    if(missing.length === 0) listEl.innerHTML = '<span class="text-emerald-500 font-bold">同步完成！</span>';
+    else listEl.innerHTML = missing.map(m => `<span class="missing-chip" onclick="requestFrame(${m-1})">${m}</span>`).join('');
+}
+
+function finalize() {
+    if(recv.active) toggleScan();
+    let b64 = ""; for(let i=0; i<recv.total; i++) b64 += recv.received[i];
+    const blob = new Blob([new Uint8Array(atob(b64).split("").map(c=>c.charCodeAt(0)))]);
+    document.getElementById('successCard').classList.remove('hidden');
+    document.getElementById('res-name-full').innerText = "传输成功: " + recv.fileName;
+    document.getElementById('dlBtn').onclick = () => {
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+        a.download = recv.fileName;
+        a.click();
+    };
+}
+
+// Tab 切换逻辑 (已补全 Class 操作)
+function switchTab(t) {
+    document.getElementById('panel-send').classList.toggle('hidden', t!=='send');
+    document.getElementById('panel-receive').classList.toggle('hidden', t!=='receive');
+    const ts = document.getElementById('tab-s');
+    const tr = document.getElementById('tab-r');
+    if(t === 'send') {
+        ts.className = 'px-6 py-2 rounded-xl bg-white shadow-sm text-blue-600';
+        tr.className = 'px-6 py-2 rounded-xl text-slate-500';
+    } else {
+        tr.className = 'px-6 py-2 rounded-xl bg-white shadow-sm text-blue-600';
+        ts.className = 'px-6 py-2 rounded-xl text-slate-500';
+    }
+}
+
+function requestFrame(i) { if(state.isSending) { state.frameIdx = i; state.isPaused = true; renderFrame(); } }
+function manualSeek(val) { state.frameIdx = parseInt(val); state.isPaused = true; renderFrame(); }
+function step(d) { state.isPaused = true; state.frameIdx = (state.frameIdx + d + state.chunks.length) % state.chunks.length; renderFrame(); }
+function togglePause() { state.isPaused = !state.isPaused; }
+function resetFile() { state.rawData = null; state.fileName = ""; document.getElementById('fileCard').classList.add('hidden'); }
+document.getElementById('fileInput').onchange = (e) => {
+    const f = e.target.files[0]; if(!f) return;
+    state.fileName = f.name;
+    const r = new FileReader();
+    r.onload = (ev) => {
+        let bin = new Uint8Array(ev.target.result);
+        let s = ''; for(let i=0; i<bin.length; i++) s += String.fromCharCode(bin[i]);
+        state.rawData = btoa(s);
+        document.getElementById('f-name').innerText = f.name;
+        document.getElementById('fileCard').classList.remove('hidden');
+    };
+    r.readAsArrayBuffer(f);
+};
+</script>
+</body>
+</html>
