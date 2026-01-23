@@ -69,7 +69,10 @@
 2. **本地携带**：右键“另存为” `index-embedded.html`，嵌入式单文件版本，放入 U 盘随身携带。
 3. **内网分发**：直接将 HTML 文件部署在内网静态服务器或共享文件夹中。
 
+## 版本介绍
 
+1. [index.html](https://topcss.github.io/AirScan-QR/index.html): 正式版，技术路线为单码循环播放传文件，支持摄像头扫码和pc跨应用扫码。
+2. [airscan-fountain.html](https://topcss.github.io/AirScan-QR/airscan-fountain.html) 喷泉版，技术路线为四码同传，解决了丢帧需要重传的问题，极高的提升了传输效率。
 
 ## 📜 许可证
 
