@@ -78,4 +78,8 @@ MIT License © [Jack/topcss]
 
 ## 待解决事项
 
-- airscan-fountain.html 实现了喷泉码，四码同传，效率极高，但是简单的文本会导致卡死，哪位朋友有空可以看看。
+- [ ] [召集令：挑战视觉传输效率极限 (Screen-to-Camera) ](https://github.com/topcss/AirScan-QR/issues/3) **邀请各位散修，我们创造最高效的视觉传输方案。**
+
+## 鸣谢散修
+
+- [x] airscan-fountain.html 实现了喷泉码，四码同传，效率极高，但是简单的文本会导致卡死，哪位朋友有空可以看看。 **感谢 [@YILS-LIN](https://github.com/YILS-LIN) 解决**
