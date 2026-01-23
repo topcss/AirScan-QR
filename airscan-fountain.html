@@ -169,7 +169,7 @@ function tick() {
     for (let i = 0; i < 4; i++) {
         const seed = Math.floor(Math.random() * 1000000);
         const rng = Utils.PRNG(seed);
-        const d = Utils.getDegree(L, rng);
+        const d = Math.min(L, Utils.getDegree(L, rng));
         const idxs = [];
         while (idxs.length < d) {
             let x = Math.floor(rng() * L);
