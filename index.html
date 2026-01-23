@@ -6,6 +6,7 @@
     <title>跨网传输助手（AirScan-QR）</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
     <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
@@ -75,10 +76,13 @@
 
     <div id="panel-receive" class="hidden space-y-4">
         <div class="bg-white p-6 rounded-[2rem] shadow-sm">
-            <div id="reader" class="w-full aspect-square rounded-3xl bg-slate-900 overflow-hidden mb-6"></div>
-            <div class="grid grid-cols-2 gap-4 mb-8">
-                <button id="btnScan" onclick="toggleScan()" class="py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg">开始扫码</button>
-                <button onclick="location.reload()" class="py-4 bg-gray-100 text-slate-500 rounded-2xl font-bold">重置</button>
+            <div id="reader" class="w-full aspect-square rounded-3xl bg-slate-900 overflow-hidden mb-6 flex items-center justify-center">
+                <p id="readerPlaceholder" class="text-slate-500 text-xs italic">等待启动扫描...</p>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mb-8">
+                <button id="btnScan" onclick="toggleScan()" class="py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg text-sm">📷 摄像头</button>
+                <button id="btnScreen" onclick="toggleScreenScan()" class="py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg text-sm">🖥️ 屏幕录制</button>
+                <button onclick="location.reload()" class="col-span-2 py-3 bg-gray-100 text-slate-500 rounded-2xl font-bold text-xs">重置所有状态</button>
             </div>
             <div class="space-y-4">
                 <div id="taskInfo" class="hidden p-4 bg-blue-50 rounded-2xl border border-blue-100">
@@ -104,13 +108,13 @@
 
 <script>
 let state = { isSending: false, isPaused: false, frameIdx: 0, chunks: [], fileName: "", fps: 12, chunkSize: 350, timer: null, tid: "", rawData: null, qr: null };
-let recv = { active: false, scanner: null, received: {}, total: 0, tid: "", startTime: 0, fileName: "" };
+let recv = { active: false, scanner: null, received: {}, total: 0, tid: "", startTime: 0, fileName: "", stream: null, mode: null };
 
 window.onload = () => {
     state.qr = new QRious({ element: document.getElementById('qr-canvas'), size: 350, level: 'L' });
 };
 
-// 核心：将完整文件名放在每一帧协议中（确保接收端随时介入都能拿到名字）
+/* --------- 发送端逻辑 --------- */
 function renderFrame() {
     if (state.chunks.length === 0) return;
     const cur = state.frameIdx;
@@ -118,8 +122,6 @@ function renderFrame() {
     document.getElementById('totalFrameNum').innerText = state.chunks.length;
     document.getElementById('frameSlider').max = state.chunks.length - 1;
     document.getElementById('frameSlider').value = cur;
-
-    // 协议：TID | 完整文件名 | 总帧数 | 索引 | 数据
     const payload = [state.tid, state.fileName, state.chunks.length, cur, state.chunks[cur]].join("|");
     state.qr.value = payload;
 }
@@ -154,34 +156,110 @@ function restartTimer() {
     }, 1000 / state.fps);
 }
 
-// 接收端逻辑
+/* --------- 接收端逻辑 (核心整合部分) --------- */
+
+// 1. 摄像头扫码
 async function toggleScan() {
-    if(recv.active) { await recv.scanner.stop(); recv.active = false; document.getElementById('btnScan').innerText="开始扫码"; }
-    else {
+    if(recv.active) { await stopAllScanning(); return; }
+    
+    try {
         recv.scanner = new Html5Qrcode("reader");
-        await recv.scanner.start({ facingMode: "environment" }, { fps: 25 }, (text) => {
-            const p = text.split('|'); if(p.length < 5) return;
-            const [tid, fullFileName, total, idx, data] = [p[0], p[1], parseInt(p[2]), parseInt(p[3]), p[4]];
-            
-            if(tid !== recv.tid) {
-                recv.tid = tid; recv.total = total; recv.received = {}; recv.startTime = Date.now();
-                recv.fileName = fullFileName;
-                document.getElementById('taskInfo').classList.remove('hidden');
-                document.getElementById('recvFileName').innerText = fullFileName;
-                document.getElementById('recvGrid').innerHTML = '';
-                for(let i=0; i<total; i++) {
-                    const d = document.createElement('div'); d.id = `dot-${i}`; d.className = 'dot';
-                    document.getElementById('recvGrid').appendChild(d);
-                }
+        await recv.scanner.start({ facingMode: "environment" }, { fps: 25 }, handleDecoded);
+        recv.active = true;
+        recv.mode = 'camera';
+        document.getElementById('btnScan').innerText = "停止扫描";
+    } catch (err) {
+        alert("摄像头启动失败: " + err);
+    }
+}
+
+// 2. 屏幕扫码 (从附件整合)
+async function toggleScreenScan() {
+    if(recv.active) { await stopAllScanning(); return; }
+
+    try {
+        recv.stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 20 } });
+        recv.active = true;
+        recv.mode = 'screen';
+        document.getElementById('btnScreen').innerText = "停止录屏";
+
+        const video = document.createElement("video");
+        video.srcObject = recv.stream;
+        video.muted = true;
+        await video.play();
+
+        const reader = document.getElementById("reader");
+        reader.innerHTML = "";
+        reader.appendChild(video);
+
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+        const loop = () => {
+            if(!recv.active || recv.mode !== 'screen') return;
+            if(video.readyState === video.HAVE_ENOUGH_DATA){
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                ctx.drawImage(video, 0, 0);
+                let img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                let code = jsQR(img.data, img.width, img.height);
+                if(code?.data) handleDecoded(code.data);
             }
-            if(!recv.received[idx]) {
-                recv.received[idx] = data;
-                document.getElementById(`dot-${idx}`).classList.add('received');
-                updateMissingUI();
-                if(Object.keys(recv.received).length === total) finalize();
-            }
-        });
-        recv.active = true; document.getElementById('btnScan').innerText="停止扫码";
+            requestAnimationFrame(loop);
+        };
+        loop();
+        
+        recv.stream.getVideoTracks()[0].onended = () => stopAllScanning();
+
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+// 3. 通用停止函数
+async function stopAllScanning() {
+    if(recv.scanner) {
+        await recv.scanner.stop();
+        recv.scanner = null;
+    }
+    if(recv.stream) {
+        recv.stream.getTracks().forEach(t => t.stop());
+        recv.stream = null;
+    }
+    recv.active = false;
+    recv.mode = null;
+    document.getElementById('btnScan').innerText = "📷 摄像头";
+    document.getElementById('btnScreen').innerText = "🖥️ 屏幕录制";
+    document.getElementById('reader').innerHTML = '<p class="text-slate-500 text-xs italic">等待启动扫描...</p>';
+}
+
+// 4. 通用解码逻辑处理
+function handleDecoded(text) {
+    const p = text.split('|');
+    if(p.length < 5) return;
+    
+    const [tid, fullFileName, total, idx, data] = [p[0], p[1], parseInt(p[2]), parseInt(p[3]), p[4]];
+    
+    // 初始化新任务
+    if(tid !== recv.tid) {
+        recv.tid = tid; recv.total = total; recv.received = {}; recv.startTime = Date.now();
+        recv.fileName = fullFileName;
+        document.getElementById('taskInfo').classList.remove('hidden');
+        document.getElementById('recvFileName').innerText = fullFileName;
+        document.getElementById('recvGrid').innerHTML = '';
+        for(let i=0; i<total; i++) {
+            const d = document.createElement('div'); d.id = `dot-${i}`; d.className = 'dot';
+            document.getElementById('recvGrid').appendChild(d);
+        }
+    }
+    
+    // 填充数据帧
+    if(!recv.received[idx]) {
+        recv.received[idx] = data;
+        const dot = document.getElementById(`dot-${idx}`);
+        if(dot) dot.classList.add('received');
+        updateMissingUI();
+        if(Object.keys(recv.received).length === total) finalize();
     }
 }
 
@@ -195,7 +273,7 @@ function updateMissingUI() {
 }
 
 function finalize() {
-    if(recv.active) toggleScan();
+    stopAllScanning();
     let b64 = ""; for(let i=0; i<recv.total; i++) b64 += recv.received[i];
     const blob = new Blob([new Uint8Array(atob(b64).split("").map(c=>c.charCodeAt(0)))]);
     document.getElementById('successCard').classList.remove('hidden');
@@ -207,7 +285,7 @@ function finalize() {
     };
 }
 
-// Tab 切换逻辑 (已补全 Class 操作)
+/* --------- 其他 UI 逻辑 --------- */
 function switchTab(t) {
     document.getElementById('panel-send').classList.toggle('hidden', t!=='send');
     document.getElementById('panel-receive').classList.toggle('hidden', t!=='receive');
@@ -227,6 +305,7 @@ function manualSeek(val) { state.frameIdx = parseInt(val); state.isPaused = true
 function step(d) { state.isPaused = true; state.frameIdx = (state.frameIdx + d + state.chunks.length) % state.chunks.length; renderFrame(); }
 function togglePause() { state.isPaused = !state.isPaused; }
 function resetFile() { state.rawData = null; state.fileName = ""; document.getElementById('fileCard').classList.add('hidden'); }
+
 document.getElementById('fileInput').onchange = (e) => {
     const f = e.target.files[0]; if(!f) return;
     state.fileName = f.name;
