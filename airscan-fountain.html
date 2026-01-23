@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AirScan-QR Fountain (喷泉码版)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
+        .qr-matrix { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; background: white; padding: 12px; border-radius: 24px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); }
+        .qr-matrix canvas { width: 100% !important; height: auto !important; border-radius: 8px; }
+        .progress-bar { transition: width 0.3s ease; }
+        .tab-active { background: white; box-shadow: 0 2px 10px rgba(0,0,0,0.05); color: #2563eb; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen text-slate-900 pb-20">
+
+<div class="max-w-xl mx-auto px-4 pt-8">
+    <div class="flex justify-between items-center mb-8">
+        <h1 class="text-2xl font-black text-slate-800 tracking-tighter">AirScan <span class="text-blue-600">Fountain</span></h1>
+        <div class="bg-gray-200 p-1 rounded-2xl flex text-sm font-bold shadow-inner w-48">
+            <button id="tab-s" onclick="switchTab('send')" class="flex-1 py-2 rounded-xl tab-active">发送</button>
+            <button id="tab-r" onclick="switchTab('receive')" class="flex-1 py-2 rounded-xl text-slate-500">接收</button>
+        </div>
+    </div>
+
+    <div id="panel-send" class="space-y-4">
+        <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
+            <textarea id="inputText" class="w-full p-5 bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl h-32 focus:border-blue-500 outline-none text-sm mb-4" placeholder="输入文字或选择文件..."></textarea>
+            
+            <div id="fileInfo" class="hidden mb-4 p-4 bg-blue-50 rounded-2xl flex justify-between items-center">
+                <span id="fileName" class="text-xs font-bold text-blue-700 truncate mr-4"></span>
+                <button onclick="resetFile()" class="text-xs font-bold text-red-500">取消</button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <button onclick="document.getElementById('fileInput').click()" class="py-4 bg-gray-100 rounded-2xl font-bold text-sm">📎 选文件</button>
+                <input type="file" id="fileInput" class="hidden">
+                <button id="btnStart" onclick="startSending()" class="py-4 bg-blue-600 text-white rounded-2xl font-bold text-sm shadow-xl">🚀 开始喷泉发射</button>
+            </div>
+        </div>
+
+        <div id="playerBox" class="hidden space-y-4">
+            <div class="qr-matrix" id="qrContainer">
+                <canvas id="qr0"></canvas>
+                <canvas id="qr1"></canvas>
+                <canvas id="qr2"></canvas>
+                <canvas id="qr3"></canvas>
+            </div>
+            <div class="bg-white p-6 rounded-[2rem] text-center">
+                <p class="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">正在循环生成随机喷泉包</p>
+                <div id="sendStats" class="text-2xl font-mono font-black text-blue-600">0 Chunks</div>
+                <button onclick="stopSending()" class="mt-4 px-8 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold">停止发送</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="panel-receive" class="hidden space-y-4">
+        <div class="bg-white p-6 rounded-[2rem] shadow-sm">
+            <div id="reader" class="w-full aspect-square rounded-3xl bg-slate-900 overflow-hidden mb-6 flex items-center justify-center relative">
+                <video id="rv" class="hidden absolute inset-0 w-full h-full object-cover"></video>
+                <canvas id="rc" class="hidden absolute inset-0 w-full h-full"></canvas>
+                
+                <p id="readerPlaceholder" class="text-slate-500 text-xs italic w-full text-center px-4">等待启动...</p>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-3 mb-6">
+                <button onclick="startScanner('environment')" class="py-4 bg-blue-600 text-white rounded-2xl font-bold text-sm shadow-lg">📷 扫码接收</button>
+                <button onclick="startScreenScanner()" class="py-4 bg-indigo-600 text-white rounded-2xl font-bold text-sm shadow-lg">🖥️ 录屏接收</button>
+            </div>
+
+            <div id="recvProgress" class="hidden space-y-4">
+                <div class="flex justify-between items-end">
+                    <div>
+                        <p id="recvName" class="text-sm font-black text-slate-800 break-all"></p>
+                        <p id="recvRank" class="text-[10px] font-bold text-blue-500 uppercase">Rank: 0/0</p>
+                    </div>
+                    <div class="text-right">
+                        <span id="pctText" class="text-3xl font-mono font-black text-slate-900">0</span><span class="text-sm font-bold text-slate-400">%</span>
+                    </div>
+                </div>
+                <div class="w-full h-4 bg-gray-100 rounded-full overflow-hidden">
+                    <div id="progressBar" class="progress-bar h-full bg-blue-600 w-0"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="successCard" class="hidden bg-emerald-600 p-8 rounded-[2.5rem] text-white shadow-2xl text-center">
+            <h3 class="font-black text-xl mb-2">🎉 接收完成</h3>
+            <p id="finInfo" class="text-xs opacity-80 mb-6"></p>
+            <button id="dlBtn" class="w-full py-5 bg-white text-emerald-700 rounded-2xl font-black shadow-lg">立即保存文件</button>
+        </div>
+    </div>
+</div>
+
+<script>
+/* --------- 工具函数 (喷泉码核心) --------- */
+const Utils = {
+    // 线性反馈随机数生成器 (确保发送接收同步)
+    PRNG: (s) => () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; },
+    xor: (a, b) => { for (let i = 0; i < a.length; i++) a[i] ^= b[i]; },
+    u2b: (u8) => btoa(String.fromCharCode.apply(null, u8)),
+    b2u: (str) => {
+        const b = atob(str);
+        const u = new Uint8Array(b.length);
+        for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+        return u;
+    },
+    getDegree: (L, rng) => {
+        const p = rng();
+        if (p < 0.4) return 1;
+        if (p < 0.7) return 2;
+        if (p < 0.9) return Math.min(L, Math.floor(rng() * 10) + 3);
+        return Math.min(L, Math.floor(rng() * L * 0.5) + 2);
+    }
+};
+
+/* --------- 发送端状态 --------- */
+let sender = {
+    chunks: [], qrs: [], timer: null, tid: "", 
+    fileName: "", fileSize: 0, chunkSize: 220, fps: 10
+};
+
+function initSender() {
+    for(let i=0; i<4; i++) {
+        sender.qrs[i] = new QRious({ element: document.getElementById(`qr${i}`), size: 300, level: 'L' });
+    }
+}
+
+async function startSending() {
+    const text = document.getElementById('inputText').value;
+    let dataU8;
+    if (sender.rawData) {
+        dataU8 = sender.rawData;
+    } else if (text) {
+        dataU8 = new TextEncoder().encode(text);
+        sender.fileName = "note_" + Date.now().toString().slice(-4) + ".txt";
+    } else {
+        return alert("请先输入内容");
+    }
+
+    sender.fileSize = dataU8.length;
+    sender.chunks = [];
+    for (let i = 0; i < dataU8.length; i += sender.chunkSize) {
+        let chunk = dataU8.slice(i, i + sender.chunkSize);
+        if (chunk.length < sender.chunkSize) {
+            let padded = new Uint8Array(sender.chunkSize);
+            padded.set(chunk);
+            chunk = padded;
+        }
+        sender.chunks.push(chunk);
+    }
+
+    sender.tid = Math.random().toString(36).slice(-3).toUpperCase();
+    document.getElementById('playerBox').classList.remove('hidden');
+    document.getElementById('sendStats').innerText = `${sender.chunks.length} Chunks`;
+    
+    initSender();
+    sender.timer = setInterval(tick, 1000 / sender.fps);
+}
+
+function tick() {
+    const L = sender.chunks.length;
+    const meta = encodeURIComponent(sender.fileName) + ":" + sender.fileSize;
+    // 同时更新4个QR
+    for (let i = 0; i < 4; i++) {
+        const seed = Math.floor(Math.random() * 1000000);
+        const rng = Utils.PRNG(seed);
+        const d = Utils.getDegree(L, rng);
+        const idxs = [];
+        while (idxs.length < d) {
+            let x = Math.floor(rng() * L);
+            if (!idxs.includes(x)) idxs.push(x);
+        }
+        const xorBuf = new Uint8Array(sender.chunkSize);
+        idxs.forEach(idx => Utils.xor(xorBuf, sender.chunks[idx]));
+        // 格式: ID|种子|总块数|数据|元数据
+        sender.qrs[i].value = `${sender.tid}|${seed}|${L}|${Utils.u2b(xorBuf)}|${meta}`;
+    }
+}
+
+function stopSending() {
+    clearInterval(sender.timer);
+    document.getElementById('playerBox').classList.add('hidden');
+}
+
+/* --------- 接收端状态 (核心解码) --------- */
+let recv = {
+    active: false, tid: "", total: 0, solved: {}, queue: [], 
+    fileName: "", fileSize: 0, startTime: 0, stream: null
+};
+
+async function startScanner(mode) {
+    const ph = document.getElementById('readerPlaceholder');
+    ph.innerText = "正在启动摄像头...";
+    recv.active = true;
+    const video = document.getElementById('rv');
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: mode } });
+        video.srcObject = stream;
+        recv.stream = stream;
+        await video.play();
+        video.classList.remove('hidden');
+        ph.classList.add('hidden');
+        requestAnimationFrame(scanLoop);
+    } catch (e) { ph.innerText = "摄像头启动失败: " + e.message; }
+}
+
+async function startScreenScanner() {
+    const ph = document.getElementById('readerPlaceholder');
+    ph.innerText = "请在系统弹窗中选择屏幕...";
+    recv.active = true;
+    const video = document.getElementById('rv');
+    try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        video.srcObject = stream;
+        recv.stream = stream;
+        await video.play();
+        video.classList.remove('hidden');
+        ph.classList.add('hidden');
+        requestAnimationFrame(scanLoop);
+    } catch (e) { ph.innerText = "录屏已取消"; }
+}
+
+function scanLoop() {
+    if (!recv.active) return;
+    const video = document.getElementById('rv');
+    const canvas = document.getElementById('rc');
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0);
+        
+        // 分块扫描优化：分别扫描全屏和四个象限（适配矩阵QR）
+        const w = canvas.width, h = canvas.height;
+        const regions = [
+            {x:0, y:0, w:w, h:h}, // 全屏
+            {x:0, y:0, w:w/2, h:h/2}, // 左上
+            {x:w/2, y:0, w:w/2, h:h/2}, // 右上
+            {x:0, y:h/2, w:w/2, h:h/2}, // 左下
+            {x:w/2, y:h/2, w:w/2, h:h/2} // 右下
+        ];
+
+        regions.forEach(r => {
+            const imgData = ctx.getImageData(r.x, r.y, r.w, r.h);
+            const code = jsQR(imgData.data, imgData.width, imgData.height);
+            if (code) handleFountainPacket(code.data);
+        });
+    }
+    requestAnimationFrame(scanLoop);
+}
+
+function handleFountainPacket(raw) {
+    if (!recv.active || recv.isFinishing) return;
+    const p = raw.split('|');
+    if (p.length < 5) return;
+    const [tid, seed, total, b64, meta] = [p[0], parseInt(p[1]), parseInt(p[2]), p[3], p[4]];
+
+    if (recv.tid !== tid) {
+        recv.tid = tid; recv.total = total; recv.solved = {}; recv.queue = [];
+        recv.startTime = Date.now(); recv.isFinishing = false;
+        const [n, s] = meta.split(':');
+        recv.fileName = decodeURIComponent(n); recv.fileSize = parseInt(s);
+        recv.currentChunkSize = Utils.b2u(b64).length; // 动态识别块大小
+        document.getElementById('recvProgress').classList.remove('hidden');
+        document.getElementById('recvName').innerText = recv.fileName;
+        document.getElementById('successCard').classList.add('hidden');
+    }
+
+    if (Object.keys(recv.solved).length < recv.total) {
+        processPacket(seed, total, Utils.b2u(b64));
+    }
+}
+
+function processPacket(seed, L, data) {
+    if (recv.isFinishing) return;
+    const rng = Utils.PRNG(seed);
+    const d = Utils.getDegree(L, rng);
+    const idxs = [];
+    while (idxs.length < d) {
+        let x = Math.floor(rng() * L);
+        if (!idxs.includes(x)) idxs.push(x);
+    }
+
+    if (L === 1) {
+        if (!recv.solved[0]) { 
+            recv.solved[0] = data; 
+        }
+        updateRecvUI(); // 确保即便已存在也触发一次UI检查，以防万一
+        return;
+    }
+
+    let curData = data;
+    let curIdxs = idxs.sort((a, b) => a - b);
+    for (let i = 0; i < curIdxs.length; i++) {
+        const idx = curIdxs[i];
+        if (recv.solved[idx]) { Utils.xor(curData, recv.solved[idx]); curIdxs.splice(i, 1); i--; }
+    }
+    if (curIdxs.length === 0) return;
+
+    for (let item of recv.queue) {
+        if (curIdxs.length === 0) break;
+        if (item.idxs[0] === curIdxs[0]) {
+            Utils.xor(curData, item.u8);
+            curIdxs = xorIdxLists(curIdxs, item.idxs);
+        } else if (item.idxs[0] > curIdxs[0]) break;
+    }
+
+    if (curIdxs.length > 0) {
+        recv.queue.push({ idxs: curIdxs, u8: curData });
+        recv.queue.sort((a, b) => a.idxs[0] - b.idxs[0]);
+    }
+
+    let foundNew = true;
+    while (foundNew) {
+        foundNew = false;
+        for (let i = 0; i < recv.queue.length; i++) {
+            if (recv.queue[i].idxs.length === 1) {
+                const sIdx = recv.queue[i].idxs[0];
+                const sData = recv.queue[i].u8;
+                recv.solved[sIdx] = sData;
+                recv.queue.splice(i, 1);
+                foundNew = true;
+                recv.queue.forEach(it => {
+                    if (it.idxs.includes(sIdx)) { Utils.xor(it.u8, sData); it.idxs = it.idxs.filter(id => id !== sIdx); }
+                });
+                break;
+            }
+        }
+    }
+    updateRecvUI();
+}
+
+function xorIdxLists(a, b) {
+    const s = new Set(a);
+    b.forEach(x => s.has(x) ? s.delete(x) : s.add(x));
+    return Array.from(s).sort((n1, n2) => n1 - n2);
+}
+
+function updateRecvUI() {
+    const done = Object.keys(recv.solved).length;
+    const pct = Math.min(100, Math.floor((done / recv.total) * 100));
+    document.getElementById('progressBar').style.width = pct + '%';
+    document.getElementById('pctText').innerText = pct;
+    document.getElementById('recvRank').innerText = `Rank: ${done} / ${recv.total}`;
+    
+    if (done >= recv.total) finalizeRecv();
+}
+
+function finalizeRecv() {
+    if (recv.isFinishing) return;
+    recv.isFinishing = true;
+    recv.active = false;
+    if(recv.stream) { recv.stream.getTracks().forEach(t => t.stop()); recv.stream = null; }
+    
+    const finalU8 = new Uint8Array(recv.fileSize);
+    for (let i = 0; i < recv.total; i++) {
+        const start = i * recv.currentChunkSize; 
+        if (start < recv.fileSize) {
+            const len = Math.min(recv.currentChunkSize, recv.fileSize - start);
+            if (recv.solved[i]) finalU8.set(recv.solved[i].slice(0, len), start);
+        }
+    }
+
+    const blob = new Blob([finalU8], { type: 'application/octet-stream' });
+    document.getElementById('successCard').classList.remove('hidden');
+    document.getElementById('finInfo').innerText = `${recv.fileName} (${(recv.fileSize/1024).toFixed(1)} KB)`;
+    document.getElementById('dlBtn').onclick = () => {
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+        a.download = recv.fileName; a.click();
+    };
+}
+
+/* --------- UI 基础逻辑 --------- */
+function switchTab(t) {
+    document.getElementById('panel-send').classList.toggle('hidden', t!=='send');
+    document.getElementById('panel-receive').classList.toggle('hidden', t!=='receive');
+    document.getElementById('tab-s').className = t==='send' ? 'flex-1 py-2 rounded-xl tab-active' : 'flex-1 py-2 rounded-xl text-slate-500';
+    document.getElementById('tab-r').className = t==='receive' ? 'flex-1 py-2 rounded-xl tab-active' : 'flex-1 py-2 rounded-xl text-slate-500';
+    if(t === 'send') { recv.active = false; if(recv.stream) recv.stream.getTracks().forEach(t=>t.stop()); }
+}
+
+document.getElementById('fileInput').onchange = (e) => {
+    const f = e.target.files[0]; if(!f) return;
+    sender.fileName = f.name;
+    const r = new FileReader();
+    r.onload = (ev) => {
+        sender.rawData = new Uint8Array(ev.target.result);
+        document.getElementById('fileInfo').classList.remove('hidden');
+        document.getElementById('fileName').innerText = f.name;
+    };
+    r.readAsArrayBuffer(f);
+};
+
+function resetFile() {
+    sender.rawData = null;
+    document.getElementById('fileInfo').classList.add('hidden');
+    document.getElementById('fileInput').value = '';
+}
+
+// 初始化
+initSender();
+</script>
+</body>
+</html>

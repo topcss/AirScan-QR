@@ -74,3 +74,8 @@
 ## 📜 许可证
 
 MIT License © [Jack/topcss]
+
+
+## 待解决事项
+
+- airscan-fountain.html 实现了喷泉码，四码同传，效率极高，但是简单的文本会导致卡死，哪位朋友有空可以看看。
