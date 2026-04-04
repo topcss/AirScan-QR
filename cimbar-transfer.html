@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cimbar 传输助手</title>
+    <script src="cimbar-deps/tailwind.min.js"></script>
+    <style>
+        html>textarea:read-only {
+            padding: 1px;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Cimbar 画布样式 */
+        #cimbar-canvas {
+            display: block;
+            margin: 0 auto;
+            max-width: 100%;
+            border-radius: 0;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        /* 进度条样式 */
+        .progress-bar {
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #10b981);
+            transition: width 0.3s ease;
+        }
+
+        /* 扫描框样式 */
+        .scan-overlay {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1;
+            border-radius: 24px;
+            overflow: hidden;
+            background: #0f172a;
+        }
+
+        .scan-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .crosshair {
+            position: absolute;
+            width: 20%;
+            height: 20%;
+            border: 4px solid rgba(255, 255, 255, 0.6);
+            pointer-events: none;
+        }
+
+        .crosshair.tl {
+            top: 15%;
+            left: 15%;
+            border-right: none;
+            border-bottom: none;
+        }
+
+        .crosshair.br {
+            bottom: 15%;
+            right: 15%;
+            border-left: none;
+            border-top: none;
+        }
+
+        .crosshair.active {
+            border-color: #10b981;
+            box-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
+        }
+
+        .crosshair.scanning {
+            border-color: #fbbf24;
+        }
+
+        /* 模式选择按钮 */
+        .mode-btn {
+            padding: 8px 16px;
+            border-radius: 12px;
+            font-weight: bold;
+            font-size: 13px;
+            transition: all 0.2s;
+            border: 2px solid transparent;
+        }
+
+        .mode-btn.active {
+            background: #3b82f6;
+            color: white;
+            border-color: #2563eb;
+        }
+
+        .mode-btn:not(.active) {
+            background: #f1f5f9;
+            color: #64748b;
+        }
+
+        /* 状态指示器 */
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50 min-h-screen text-slate-900 pb-20">
+
+    <div class="max-w-xl mx-auto px-4 pt-8">
+        <!-- 标题栏 -->
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-2xl font-black text-slate-800 tracking-tighter">Cimbar 传输</h1>
+            <div class="bg-gray-200 p-1 rounded-2xl flex text-sm font-bold shadow-inner">
+                <button id="tab-s" onclick="switchTab('send')"
+                    class="px-6 py-2 rounded-xl bg-white shadow-sm text-blue-600 transition-all">发送</button>
+                <button id="tab-r" onclick="switchTab('receive')"
+                    class="px-6 py-2 rounded-xl text-slate-500 transition-all">接收</button>
+            </div>
+        </div>
+
+        <!-- 发送端面板 -->
+        <div id="panel-send" class="space-y-4">
+            <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
+                <!-- 文件选择区域 -->
+                <div class="relative mb-6">
+                    <div id="dropZone"
+                        class="w-full p-8 bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl text-center cursor-pointer hover:border-blue-400 transition-colors"
+                        ondragover="event.preventDefault(); this.classList.add('border-blue-400');"
+                        ondragleave="this.classList.remove('border-blue-400');" ondrop="handleDrop(event)"
+                        onclick="document.getElementById('fileInput').click()">
+                        <p class="text-sm text-slate-500 mb-2">📎 拖拽文件到此处或点击选择</p>
+                        <p class="text-xs text-slate-400">支持任意格式文件</p>
+                    </div>
+                    <input type="file" id="fileInput" class="hidden" onchange="handleFileSelect(event)">
+
+                    <div id="fileInfo" class="hidden mt-4 p-4 bg-blue-50 rounded-2xl border border-blue-100">
+                        <p id="fileName" class="text-sm font-bold text-blue-800 break-all mb-2"></p>
+                        <p id="fileSize" class="text-xs text-blue-600"></p>
+                        <button onclick="clearFile()"
+                            class="mt-2 text-xs font-bold text-red-500 underline">清除文件</button>
+                    </div>
+                </div>
+
+                <!-- 配置选项 -->
+                <div class="space-y-4 mb-6">
+                    <div>
+                        <label class="text-xs font-bold text-slate-500 mb-2 block">编码模式</label>
+                        <div class="grid grid-cols-4 gap-2">
+                            <button class="mode-btn active" onclick="setMode('B', this)">B</button>
+                            <button class="mode-btn" onclick="setMode('Bm', this)">Bm</button>
+                            <button class="mode-btn" onclick="setMode('Bu', this)">Bu</button>
+                            <button class="mode-btn" onclick="setMode('4C', this)">4C</button>
+                        </div>
+                        <p class="text-[10px] text-slate-400 mt-2">B:稳定 | Bm:改进 | Bu:高对比 | 4C:高密度</p>
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-xs font-bold text-slate-500">帧率</span>
+                            <span id="fpsDisplay" class="text-xs font-mono text-blue-600">15 FPS</span>
+                        </div>
+                        <input type="range" id="fpsRange" min="5" max="20" step="5" value="15" class="w-full"
+                            oninput="updateFPS(this.value)">
+                    </div>
+                </div>
+
+                <!-- 控制按钮 -->
+                <button id="btnStart" onclick="startEncoding()" disabled
+                    class="w-full py-4 bg-gray-300 text-white rounded-2xl font-bold text-sm transition-all">
+                    🚀 选择文件后开始
+                </button>
+            </div>
+
+            <!-- 编码显示区域 -->
+            <div id="encodingBox" class="hidden bg-white p-6 rounded-none shadow-2xl border border-gray-50">
+                <div class="text-center mb-4">
+                    <div class="status-indicator bg-emerald-50 text-emerald-700">
+                        <div class="status-dot bg-emerald-500"></div>
+                        <span>正在编码传输</span>
+                    </div>
+                </div>
+
+                <!-- Canvas 容器，添加内边距确保定位标记完整显示 -->
+                <div class="flex justify-center items-center py-2">
+                    <canvas id="cimbar-canvas" width="400" height="400" class="max-w-full h-auto rounded-none"></canvas>
+                </div>
+
+                <div class="mt-6 space-y-3">
+                    <div class="flex justify-between text-xs">
+                        <span class="text-slate-500">当前帧</span>
+                        <span id="frameCounter" class="font-mono font-bold">0</span>
+                    </div>
+                    <button onclick="stopEncoding()"
+                        class="w-full py-3 bg-red-500 text-white rounded-2xl font-bold text-sm">
+                        ⏹ 停止传输
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 接收端面板 -->
+        <div id="panel-receive" class="hidden space-y-4">
+            <div class="bg-white p-6 rounded-[2rem] shadow-sm">
+                <!-- 摄像头预览 -->
+                <div class="scan-overlay mb-6">
+                    <video id="video" class="scan-video" autoplay playsinline muted></video>
+                    <div id="crosshair1" class="crosshair tl"></div>
+                    <div id="crosshair2" class="crosshair br"></div>
+                </div>
+
+                <!-- 控制按钮 -->
+                <div class="grid grid-cols-2 gap-3 mb-6">
+                    <button id="btnCamera" onclick="toggleCamera()"
+                        class="py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg text-sm">
+                        📷 启动摄像头
+                    </button>
+                    <button onclick="location.reload()"
+                        class="py-4 bg-gray-100 text-slate-500 rounded-2xl font-bold text-sm">
+                        🔄 重置
+                    </button>
+                </div>
+
+                <!-- 接收状态 -->
+                <div id="recvStatus" class="hidden space-y-4">
+                    <div class="p-4 bg-blue-50 rounded-2xl border border-blue-100">
+                        <p class="text-[10px] font-black text-blue-400 mb-1 uppercase">文件名</p>
+                        <p id="recvFileName" class="text-sm font-bold text-blue-800 break-all">等待数据...</p>
+                    </div>
+
+                    <div class="p-5 bg-emerald-50 rounded-3xl border border-emerald-100">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="text-xs font-black text-emerald-600 uppercase">解码进度</span>
+                            <div class="flex gap-2">
+                                <span id="decodeTimer" class="bg-blue-200 text-blue-700 px-3 py-1 rounded-full text-xs font-bold font-mono hidden">⏱ 00:00</span>
+                                <span id="decodeStats" class="bg-emerald-200 text-emerald-700 px-3 py-1 rounded-full text-xs font-bold font-mono">0%</span>
+                            </div>
+                        </div>
+                        <div class="progress-bar">
+                            <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+                        </div>
+                        <p id="decodeInfo" class="text-[10px] text-emerald-600 mt-2 font-mono">初始化中...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<!-- recv.js 需要的隐藏 DOM 元素 -->
+<div id="framesInFlight" style="display: none;">0</div>
+<div id="t0" style="display: none;"></div>
+<div id="t1" style="display: none;"></div>
+<div id="t2" style="display: none;"></div>
+<div id="t3" style="display: none;"></div>
+<div id="tdec" style="display: none;"></div>
+<div id="errorbox" style="display: none;"></div>
+<div id="progress_bars" style="display: none;">
+    <div class="progress"></div>
+</div>
+<div id="nav-container" class="mode-auto" style="display: none;">
+    <a id="mode-val" href="javascript:void(0)">B</a>
+</div>
+    <script src="cimbar-deps/vconsole.min.js"></script>
+    <!-- 引入 Cimbar WASM 模块 -->
+    <script>
+        // 必须在 cimbar_js.js 加载之前定义 Module
+        var Module = {};
+        Module.onRuntimeInitialized = () => {
+            console.log('Cimbar WASM 模块已初始化');
+        };
+    </script>
+    <script src="cimbar-deps/cimbar_js.2026-01-20T0312.js"></script>
+    <script src="cimbar-deps/zstd.2026-01-20T0312.js"></script>
+    <script src="cimbar-deps/main.2026-01-20T0312.js"></script>
+    <script src="cimbar-deps/recv.2026-01-20T0312.js"></script>
+
+
+    <script>
+        // ==================== 全局状态 ====================
+        let sendState = {
+            file: null,
+            fileName: '',
+            fileSize: 0,
+            mode: 'B',
+            fps: 15,
+            isEncoding: false,
+            animationId: null
+        };
+
+        let recvState = {
+            cameraActive: false,
+            videoStream: null,
+            workers: [],
+            decodeBuffer: null,
+            fileId: null,
+            fileName: '',
+            progress: 0,
+            startTime: null, // 解码开始时间
+            timerInterval: null // 计时器间隔ID
+        };
+
+        // ==================== 标签切换 ====================
+        function switchTab(tab) {
+            document.getElementById('panel-send').classList.toggle('hidden', tab !== 'send');
+            document.getElementById('panel-receive').classList.toggle('hidden', tab !== 'receive');
+
+            const ts = document.getElementById('tab-s');
+            const tr = document.getElementById('tab-r');
+
+            if (tab === 'send') {
+                ts.className = 'px-6 py-2 rounded-xl bg-white shadow-sm text-blue-600';
+                tr.className = 'px-6 py-2 rounded-xl text-slate-500';
+            } else {
+                tr.className = 'px-6 py-2 rounded-xl bg-white shadow-sm text-blue-600';
+                ts.className = 'px-6 py-2 rounded-xl text-slate-500';
+            }
+        }
+
+        // ==================== 发送端逻辑 ====================
+
+        // 文件处理
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) processFile(file);
+        }
+
+        function handleDrop(event) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('border-blue-400');
+            const file = event.dataTransfer.files[0];
+            if (file) processFile(file);
+        }
+
+        function processFile(file) {
+            sendState.file = file;
+            sendState.fileName = file.name;
+            sendState.fileSize = file.size;
+
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileSize').textContent = formatFileSize(file.size);
+            document.getElementById('fileInfo').classList.remove('hidden');
+            document.getElementById('dropZone').classList.add('hidden');
+
+            const btn = document.getElementById('btnStart');
+            btn.disabled = false;
+            btn.classList.remove('bg-gray-300');
+            btn.classList.add('bg-blue-600', 'shadow-xl', 'active:scale-95');
+            btn.textContent = '🚀 开始编码传输';
+        }
+
+        function clearFile() {
+            sendState.file = null;
+            sendState.fileName = '';
+            sendState.fileSize = 0;
+
+            document.getElementById('fileInfo').classList.add('hidden');
+            document.getElementById('dropZone').classList.remove('hidden');
+            document.getElementById('fileInput').value = '';
+
+            const btn = document.getElementById('btnStart');
+            btn.disabled = true;
+            btn.classList.add('bg-gray-300');
+            btn.classList.remove('bg-blue-600', 'shadow-xl', 'active:scale-95');
+            btn.textContent = '🚀 选择文件后开始';
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // 模式设置
+        function setMode(mode, btn) {
+            sendState.mode = mode;
+            document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+
+        // FPS 更新
+        function updateFPS(value) {
+            sendState.fps = parseInt(value);
+            document.getElementById('fpsDisplay').textContent = value + ' FPS';
+        }
+
+        // 开始编码
+        async function startEncoding() {
+            if (!sendState.file) return;
+
+            sendState.isEncoding = true;
+            document.getElementById('encodingBox').classList.remove('hidden');
+            document.getElementById('btnStart').disabled = true;
+
+            // 初始化 Cimbar 编码器
+            const canvas = document.getElementById('cimbar-canvas');
+            const ctx = canvas.getContext('webgl2') || canvas.getContext('webgl');
+
+            if (!ctx) {
+                alert('WebGL 不可用，请检查浏览器支持');
+                return;
+            }
+
+            // 设置 Module.canvas（必须在调用任何 WASM 函数之前）
+            if (typeof Module !== 'undefined') {
+                Module.canvas = canvas;
+            }
+
+            // 配置编码模式
+            const modeMap = { 'B': 68, 'Bm': 67, 'Bu': 66, '4C': 4 };
+            try {
+                Module._cimbare_configure(modeMap[sendState.mode], -1);
+
+                // 获取宽高比并调整 Canvas 尺寸（关键步骤）
+                const idealRatio = Module._cimbare_get_aspect_ratio();
+
+                // 根据宽高比计算合适的尺寸
+                // 原版 cimbar 的 viewport 是 1040x1040，canvas 必须至少这么大
+                let canvasWidth = 1040;
+                let canvasHeight = Math.floor(canvasWidth / idealRatio);
+
+                // 如果高度超过 1040，则以高度为基准
+                if (canvasHeight > 1040) {
+                    canvasHeight = 1040;
+                    canvasWidth = Math.floor(canvasHeight * idealRatio);
+                }
+
+                // 确保 canvas 尺寸不小于 viewport (1040x1040)
+                canvasWidth = Math.max(canvasWidth, 1040);
+                canvasHeight = Math.max(canvasHeight, 1040);
+
+                // 设置 Canvas 的 width/height 属性（影响 WebGL 渲染缓冲区）
+                canvas.width = canvasWidth;
+                canvas.height = canvasHeight;
+
+                // 设置 CSS 显示尺寸（控制显示大小）
+                const container = document.getElementById('encodingBox');
+                // 减去 padding 并留出额外边距，确保定位标记完整显示
+                const containerWidth = container.clientWidth - 64 || 480;
+                const containerHeight = container.clientHeight - 240 || 460;
+
+                // 让二维码尽可能大，但留出足够边距
+                const displayRatio = containerWidth / containerHeight;
+                let displayWidth, displayHeight;
+
+                // 留出 4px 边距确保定位标记不会被裁剪
+                const margin = 4;
+
+                if (displayRatio > idealRatio) {
+                    displayHeight = containerHeight - margin;
+                    displayWidth = Math.floor(displayHeight * idealRatio);
+                } else {
+                    displayWidth = containerWidth - margin;
+                    displayHeight = Math.floor(displayWidth / idealRatio);
+                }
+
+                canvas.style.width = displayWidth + 'px';
+                canvas.style.height = displayHeight + 'px';
+
+                console.log(`Canvas 渲染尺寸: ${canvasWidth}x${canvasHeight}, 显示尺寸: ${displayWidth}x${displayHeight}, 宽高比: ${idealRatio}`);
+            } catch (e) {
+                console.error('配置编码模式失败:', e);
+                alert('编码初始化失败: ' + e.message);
+                return;
+            }
+
+            // 初始化编码会话
+            const fileNameBytes = new TextEncoder('utf-8').encode(sendState.fileName);
+            const fileNamePtr = Module._malloc(fileNameBytes.length);
+            const wasmFileName = new Uint8Array(Module.HEAPU8.buffer, fileNamePtr, fileNameBytes.length);
+            wasmFileName.set(fileNameBytes);
+            Module._cimbare_init_encode(fileNamePtr, fileNameBytes.length, -1);
+            Module._free(fileNamePtr);
+
+            // 读取文件并编码
+            const reader = new FileReader();
+            const chunkSize = Module._cimbare_encode_bufsize();
+
+            reader.onload = function (e) {
+                const data = new Uint8Array(e.target.result);
+                const wasmPtr = Module._malloc(data.length);
+                const wasmData = new Uint8Array(Module.HEAPU8.buffer, wasmPtr, data.length);
+                wasmData.set(data);
+
+                Module._cimbare_encode(wasmPtr, data.length);
+                Module._free(wasmPtr);
+
+                // 开始渲染循环
+                startRenderLoop();
+            };
+
+            reader.readAsArrayBuffer(sendState.file);
+        }
+
+        // 渲染循环
+        function startRenderLoop() {
+            const canvas = document.getElementById('cimbar-canvas');
+            let frameCount = 0;
+            const interval = 1000 / sendState.fps;
+            let lastTime = 0;
+
+            function render(currentTime) {
+                if (!sendState.isEncoding) return;
+
+                if (currentTime - lastTime >= interval) {
+                    Module._cimbare_render();
+                    Module._cimbare_next_frame(false);
+
+                    frameCount++;
+                    document.getElementById('frameCounter').textContent = frameCount;
+
+                    lastTime = currentTime;
+                }
+
+                sendState.animationId = requestAnimationFrame(render);
+            }
+
+            render(0);
+        }
+
+        function stopEncoding() {
+            sendState.isEncoding = false;
+            if (sendState.animationId) {
+                cancelAnimationFrame(sendState.animationId);
+            }
+            document.getElementById('encodingBox').classList.add('hidden');
+            document.getElementById('btnStart').disabled = false;
+        }
+
+        // ==================== 接收端逻辑 ====================
+
+        // 摄像头控制
+        async function toggleCamera() {
+            if (recvState.cameraActive) {
+                stopCamera();
+                return;
+            }
+
+            try {
+                // 检查 Recv 是否可用
+                if (typeof Recv === 'undefined') {
+                    alert('Recv 模块未加载，请刷新页面');
+                    return;
+                }
+
+                // 劫持 Recv.render_progress 来更新我们的 UI
+                const originalRenderProgress = Recv.render_progress;
+                Recv.render_progress = function (report) {
+                    // 调用原始函数
+                    originalRenderProgress.call(Recv, report);
+
+                    // 更新我们的进度条
+                    if (Array.isArray(report) && report.length > 0) {
+                        // 取平均进度，限制最大值为 1.0 (100%)
+                        const avgProgress = Math.min(
+                            report.reduce((sum, p) => sum + p, 0) / report.length,
+                            1.0
+                        );
+                        const percent = Math.round(avgProgress * 100);
+                        updateProgress(percent);
+
+                        // 更新状态显示
+                        document.getElementById('decodeInfo').textContent = `已接收 ${percent}%`;
+                        document.getElementById('recvFileName').textContent = `正在解码... (${report.length} 个数据流)`;
+
+                        console.log(`进度更新: ${percent}%, 数据流数量: ${report.length}`);
+                    }
+                };
+
+                // 劫持 Sink.reassemble_file 来更新文件名和完成状态
+                const originalReassemble = Sink.reassemble_file;
+                Sink.reassemble_file = function (id) {
+                    console.log('开始组装文件, id:', id);
+
+                    // 获取文件大小
+                    const size = Module._cimbard_get_filesize(id);
+                    console.log('文件大小:', size);
+
+                    let name = id + '.' + size;
+
+                    // 尝试获取文件名
+                    const fnsize = Module._cimbard_get_filename(id, Sink.errBuff, Sink.errBuffSize);
+                    console.log('文件名长度:', fnsize);
+
+                    if (fnsize > 0) {
+                        const temparr = new Uint8Array(Module.HEAPU8.buffer, Sink.errBuff, fnsize);
+                        name = new TextDecoder('utf-8').decode(temparr);
+                        console.log('文件名:', name);
+                    }
+
+                    // 调用原始函数（会在 Zstd.decompress 中获取真正的文件名）
+                    originalReassemble.call(Sink, id);
+                };
+
+                // 劫持 Zstd.decompress 来捕获真正的文件名
+                if (typeof Zstd !== 'undefined') {
+                    const originalDecompress = Zstd.decompress;
+                    Zstd.decompress = function (name, id) {
+                        console.log('Zstd.decompress 被调用, name:', name, 'id:', id);
+
+                        // 更新 UI 显示真正的文件名
+                        document.getElementById('recvFileName').textContent = name;
+                        recvState.fileName = name;
+
+                        // 调用原始函数
+                        originalDecompress.call(Zstd, name, id);
+                    };
+                }
+
+                // 获取 video 元素
+                const video = document.getElementById('video');
+                // 不设置固定分辨率，让浏览器自动选择（参考 recv.html）
+
+                // 等待 WASM 模块准备好
+                await Recv.ww_ready;
+
+                // 初始化 Sink
+                if (typeof Sink !== 'undefined') {
+                    Sink.allocate();
+                }
+
+                // 初始化摄像头和视频处理
+                Recv.init_video(video);
+
+                recvState.cameraActive = true;
+                document.getElementById('btnCamera').textContent = '⏹ 停止摄像头';
+                document.getElementById('recvStatus').classList.remove('hidden');
+
+                // 启动解码计时器
+                startDecodeTimer();
+
+            } catch (err) {
+                console.error('摄像头启动失败:', err);
+                alert('无法启动摄像头: ' + err.message);
+            }
+        }
+
+        function stopCamera() {
+            if (recvState.videoStream) {
+                recvState.videoStream.getTracks().forEach(track => track.stop());
+                recvState.videoStream = null;
+            }
+
+            recvState.cameraActive = false;
+            document.getElementById('btnCamera').textContent = '📷 启动摄像头';
+
+            // 停止解码计时器
+            stopDecodeTimer();
+        }
+
+        // 更新进度
+        function updateProgress(percent) {
+            const progressFill = document.getElementById('progressFill');
+            const decodeStats = document.getElementById('decodeStats');
+
+            if (!progressFill || !decodeStats) return;
+
+            progressFill.style.width = percent + '%';
+
+            if (percent >= 100) {
+                completeDownload();
+            }
+        }
+
+        // 完成下载
+        function completeDownload() {
+            stopCamera();
+
+            // 显示完成提示
+            const recvFileName = document.getElementById('recvFileName');
+            const decodeInfo = document.getElementById('decodeInfo');
+
+            if (recvFileName) {
+                recvFileName.textContent = '✅ ' + (recvState.fileName || '文件已接收');
+                recvFileName.style.color = '#10b981';
+            }
+            if (decodeInfo) {
+                decodeInfo.textContent = '文件已自动下载';
+            }
+        }
+
+        // ==================== 解码计时器 ====================
+
+        // 启动解码计时器
+        function startDecodeTimer() {
+            recvState.startTime = Date.now();
+            recvState.timerInterval = setInterval(updateDecodeTimer, 1000);
+            
+            const timerElement = document.getElementById('decodeTimer');
+            if (timerElement) {
+                timerElement.classList.remove('hidden');
+            }
+            
+            console.log('⏱ 解码计时器已启动');
+        }
+
+        // 更新解码计时器显示
+        function updateDecodeTimer() {
+            if (!recvState.startTime) return;
+
+            const elapsed = Math.floor((Date.now() - recvState.startTime) / 1000);
+            const minutes = Math.floor(elapsed / 60);
+            const seconds = elapsed % 60;
+            
+            const timeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            
+            const timerElement = document.getElementById('decodeTimer');
+            if (timerElement) {
+                timerElement.textContent = `⏱ ${timeStr}`;
+            }
+        }
+
+        // 停止解码计时器
+        function stopDecodeTimer() {
+            if (recvState.timerInterval) {
+                clearInterval(recvState.timerInterval);
+                recvState.timerInterval = null;
+            }
+            
+            // 隐藏计时器
+            // const timerElement = document.getElementById('decodeTimer');
+            // if (timerElement) {
+            //     timerElement.classList.add('hidden');
+            // }
+            
+            recvState.startTime = null;
+            console.log('⏱ 解码计时器已停止');
+        }
+
+// ==================== 初始化 ====================
+
+        // 初始化 vConsole
+        const vConsole = new VConsole();
+        console.log('Cimbar 传输助手已加载，vConsole 已初始化');
+
+        // 页面加载时立即初始化 Worker（参考 recv.html）
+        if (typeof Recv !== 'undefined') {
+            Recv.init_ww(4);
+            console.log('Worker 已初始化');
+        }
+
+        window.onload = () => {
+            // 检查 WASM 是否加载
+            if (typeof Module === 'undefined') {
+                console.warn('Cimbar WASM 模块未加载，部分功能可能不可用');
+            }
+        };
+    </script>
+</body>
+
+</html>
