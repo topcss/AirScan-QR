@@ -34,7 +34,7 @@ class QRStreamHandler(http.server.SimpleHTTPRequestHandler):
 
 httpd = http.server.HTTPServer(('0.0.0.0', 4443), QRStreamHandler)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-context.load_cert_chain(certfile="cert.pem", keyfile="key.pem")
+context.load_cert_chain(certfile="cimbar-deps-start/cert.pem", keyfile="cimbar-deps-start/key.pem")
 httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
 print("🚀 Server: https://0.0.0.0:4443")
 httpd.serve_forever()
