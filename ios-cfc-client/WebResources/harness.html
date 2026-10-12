@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>CFC Receiver</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#0f172a;overflow:hidden;
+    font-family:system-ui,-apple-system,sans-serif;-webkit-tap-highlight-color:transparent;}
+  /* ─── 上下分区：上方相机取景区 + 下方独立进度面板，两者互不遮挡 ─── */
+  body{display:flex;flex-direction:column;box-sizing:border-box;
+    padding:calc(env(safe-area-inset-top,0px) + 8px) 10px calc(env(safe-area-inset-bottom,0px) + 8px);}
+
+  /* 取景区（占据剩余全部高度） */
+  #stage{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;background:#000;
+    border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.5);}
+  #video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;}
+  /* 取景框十字：绿=已锁定二维码（计时中），黄=看到码但未解出，白=未识别 */
+  .crosshair{position:absolute;width:20%;height:20%;border:4px solid rgba(255,255,255,.5);pointer-events:none;z-index:5;
+    transition:border-color .2s;}
+  .crosshair.tl{top:15%;left:15%;border-right:none;border-bottom:none;}
+  .crosshair.br{bottom:15%;right:15%;border-left:none;border-top:none;}
+  /* 注意顺序：recv.js 的 update_visual_state 有个上游笔误，可能给 crosshair2
+     同时留下两个 class，把 active 放后面保证"已锁定"的绿色优先 */
+  .crosshair.scanning_xhairs{border-color:#fbbf24;}
+  .crosshair.active_xhairs{border-color:#34d399;}
+
+  /* ─── 进度面板：进度 / 模式 / 计时 / 文件名（独立占位，不覆盖画面） ─── */
+  #hud{flex:0 0 auto;margin-top:10px;padding:12px 14px 13px;box-sizing:border-box;color:#e2e8f0;
+    background:#111c33;border:1px solid rgba(148,163,184,.16);border-radius:16px;}
+  #hudTop{display:flex;align-items:center;justify-content:space-between;}
+  #hudTitle{font-size:13px;font-weight:800;color:#60a5fa;letter-spacing:.3px;}
+  #hudRight{display:flex;gap:8px;align-items:center;}
+  /* 计时器：按 phase 着色 —— 灰=等待首次识别，蓝=计时中，黄=已暂停，绿=已完成 */
+  #hudTimer{font-size:12px;font-family:ui-monospace,monospace;font-weight:700;color:#93c5fd;}
+  #hudTimer.boot,#hudTimer.idle{color:#64748b;}
+  #hudTimer.running{color:#93c5fd;}
+  #hudTimer.paused{color:#fbbf24;}
+  #hudTimer.done{color:#34d399;}
+  /* 手工重置按钮 */
+  #hudReset{font:inherit;font-size:11px;font-weight:700;color:#e2e8f0;padding:4px 10px;
+    border:1px solid rgba(148,163,184,.35);background:rgba(148,163,184,.12);border-radius:999px;
+    -webkit-appearance:none;cursor:pointer;}
+  #hudReset:active{background:rgba(148,163,184,.32);}
+  #hudMode{font-size:10px;font-family:ui-monospace,monospace;font-weight:700;color:#c084fc;padding:2px 8px;
+    background:rgba(192,132,252,0.15);border-radius:6px;display:none;}
+  /* 进度条 + 百分比同行 */
+  #hudProg{display:flex;align-items:center;gap:10px;margin:10px 0 8px;}
+  #hudBar{flex:1 1 auto;height:10px;background:rgba(255,255,255,.12);border-radius:5px;overflow:hidden;}
+  #hudBarFill{height:100%;background:linear-gradient(90deg,#3b82f6,#10b981);width:0%;
+    border-radius:5px;transition:width .2s;}
+  #hudPercent{flex:0 0 auto;min-width:48px;text-align:right;
+    font-size:18px;font-family:ui-monospace,monospace;font-weight:800;color:#34d399;}
+  /* 文件名 & 状态 */
+  #hudFileName{font-size:12px;color:#cbd5e1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:none;}
+  #hudStatus{font-size:11px;color:#94a3b8;margin-top:3px;}
+
+  /* 启动遮罩（仅覆盖取景区，进度面板始终可见） */
+  #overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:14px;background:rgba(15,23,42,.78);z-index:30;color:#e2e8f0;text-align:center;padding:24px;box-sizing:border-box;}
+  #startBtn{padding:16px 34px;border:none;border-radius:16px;background:#3b82f6;color:#fff;
+    font-size:17px;font-weight:700;box-shadow:0 8px 24px rgba(59,130,246,.4);cursor:pointer;}
+  #startBtn:active{opacity:.8;}
+  #overlayText{font-size:15px;font-weight:600;}
+</style>
+</head>
+<body>
+  <!-- ═══ 上方：相机取景区（启动遮罩内嵌于此，不遮挡下方进度面板）═══ -->
+  <div id="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <div id="crosshair1" class="crosshair tl"></div>
+    <div id="crosshair2" class="crosshair br"></div>
+
+    <div id="overlay">
+      <div id="overlayText">正在启动解码引擎…</div>
+      <button id="startBtn" style="display:none;">📷 开始接收</button>
+    </div>
+  </div>
+
+  <!-- ═══ 下方：实时进度面板 ═══ -->
+  <div id="hud">
+    <div id="hudTop"><span id="hudTitle">CFC 扫码接收</span>
+      <div id="hudRight"><span id="hudMode"></span><span id="hudTimer" class="boot">⏱ 00:00</span>
+        <button id="hudReset" type="button">↺ 重置</button></div>
+    </div>
+    <div id="hudProg">
+      <div id="hudBar"><div id="hudBarFill"></div></div>
+      <span id="hudPercent">0%</span>
+    </div>
+    <div id="hudFileName"></div>
+    <div id="hudStatus">📷 准备中…</div>
+  </div>
+
+  <!-- recv.js 隐藏 DOM -->
+  <div id="framesInFlight" style="display:none;">0</div>
+  <div id="t0" style="display:none;"></div><div id="t1" style="display:none;"></div>
+  <div id="t2" style="display:none;"></div><div id="t3" style="display:none;"></div>
+  <div id="tdec" style="display:none;"></div><div id="errorbox" style="display:none;"></div>
+  <div id="progress_bars" style="display:none;"><div class="progress"></div></div>
+  <div id="nav-container" class="mode-auto" style="display:none;"><a id="mode-val" href="javascript:void(0)">B</a></div>
+  <div id="nav-button" style="display:none;"></div><div id="nav-content" style="display:none;"></div>
+  <div id="debug-button" style="display:none;"></div>
+
+<script>
+  // ============ 原生桥（兜底：供原生 HUD 轮询 / 最终文件回传） ============
+  function postNative(name, obj){
+    try{ if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers[name])
+           window.webkit.messageHandlers[name].postMessage(obj); }catch(e){}
+  }
+
+  // ============ 内 HUD（实时，不依赖原生桥） ============
+  // phase 状态机：
+  //   boot    引擎/相机启动中，状态行由 setHUDStatus 直接控制
+  //   idle    相机已就绪，等待首次识别到二维码（计时器停在 00:00）
+  //   running 已锁定二维码，计时中
+  //   paused  目标丢失（镜头移开），计时冻结，重新识别后自动续计
+  //   done    文件接收完成，计时停在总耗时
+  var HUD={percent:0, streams:0, mode:'', fileName:'', status:'', detail:'',
+           phase:'boot', locked:false, accumMs:0, segStart:0, lastFrameAt:0,
+           tickId:null, timerSec:0, _lastMode:0};
+  var $=function(id){return document.getElementById(id);};
+
+  function setPercent(p, streams){
+    HUD.percent=p; HUD.streams=streams;
+    $('hudPercent').textContent=p+'%';
+    $('hudBarFill').style.width=p+'%';
+  }
+  function setMode(m){ HUD.mode=m; var e=$('hudMode'); e.textContent='模式:'+m; e.style.display=m?'inline-block':'none'; }
+  function setFileName(n){ HUD.fileName=n; var e=$('hudFileName'); e.textContent=n; e.style.display=n?'block':'none'; }
+  function setHUDStatus(s){ HUD.status=s; $('hudStatus').textContent=s; }
+
+  // ── 计时：累计毫秒 + 当前计时段起点，暂停/续计不丢精度 ──
+  function elapsedMs(){ return HUD.accumMs + (HUD.segStart ? Date.now()-HUD.segStart : 0); }
+  function freezeTimer(){ if(HUD.segStart){ HUD.accumMs+=Date.now()-HUD.segStart; HUD.segStart=0; } }
+
+  function renderTimer(){
+    var sec=Math.floor(elapsedMs()/1000); HUD.timerSec=sec;
+    var icon = HUD.phase==='paused' ? '⏸' : (HUD.phase==='done' ? '✅' : '⏱');
+    var e=$('hudTimer');
+    e.textContent=icon+' '+String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');
+    e.className=HUD.phase;
+  }
+
+  function tickOnce(){
+    // 帧回调断流（相机停摆/被完全遮挡/App 切后台）超过 1.5s 也按丢失目标处理
+    if(HUD.locked && HUD.lastFrameAt && Date.now()-HUD.lastFrameAt>1500) setLocked(false);
+    renderTimer();
+  }
+  function startTick(){ if(HUD.tickId) return; HUD.tickId=setInterval(tickOnce,500); }
+  function stopTick(){ if(HUD.tickId){clearInterval(HUD.tickId);HUD.tickId=null;} }
+
+  // 由 Recv.update_visual_state 每帧驱动：on=最近 30 帧内成功解出过数据
+  function setLocked(on){
+    if(HUD.locked===on) return;
+    HUD.locked=on;
+    if(HUD.phase==='done'||HUD.phase==='boot') return;
+    if(on){
+      HUD.segStart=Date.now(); HUD.phase='running';
+    }else{
+      freezeTimer();
+      HUD.phase = HUD.accumMs>0 ? 'paused' : 'idle';
+    }
+    renderTimer(); refreshStatus();
+  }
+
+  // 状态行的唯一出口，避免解码进度与暂停提示互相覆盖
+  function refreshStatus(){
+    if(HUD.phase==='boot') return;
+    if(HUD.phase==='done'){ setHUDStatus('✅ 接收完成：'+HUD.fileName); return; }
+    if(HUD.phase==='idle'){ setHUDStatus('📷 请对准二维码，识别后自动开始计时'); return; }
+    if(HUD.phase==='paused'){ setHUDStatus('⏸ 已暂停 · 未识别到二维码，请重新对准'); return; }
+    setHUDStatus(HUD.detail||'🔍 已锁定，正在接收…');
+  }
+
+  // 把当前进度同步给原生（供弱更新时的兜底）
+  function syncToNative(){
+    postNative('progress',{percent:HUD.percent,streams:HUD.streams});
+    postNative('status',{status:HUD.status,mode:HUD.mode,fileName:HUD.fileName,timerSec:HUD.timerSec});
+  }
+
+  // ============ WASM Module ============
+  var Module = {};
+  Module.onRuntimeInitialized = function(){
+    console.log('[harness] wasm ready');
+    setHUDStatus('WASM 已就绪，初始化 Worker…');
+    try{ boot(); }catch(e){ console.error('[harness] boot error',e); showStartButton('初始化失败：'+e.message); }
+  };
+
+  window.addEventListener('error',function(e){
+    setHUDStatus('JS 错误：'+e.message);
+    postNative('jslog',{level:'error',msg:'Uncaught '+e.message+' @'+(e.filename||'')+':'+(e.lineno||'')});
+  });
+
+  var _started=false;
+
+  // 迟滞消抖状态：必须是脚本顶层作用域。UniversalDecoder 的方法与
+  // __cfcResetHUD 都在顶层，若把它声明在 boot() 里，那些赋值只会落到一个
+  // 隐式全局上，boot() 内的判断永远读不到，刷新时间戳就成了死代码。
+  var _lastSuccessAt=0;
+  var HOLD_TIMEOUT_MS=1000;
+
+  async function boot(){
+    if(_started) return; _started=true;
+    var NUM_WORKERS=3;
+    Recv.init_ww(NUM_WORKERS);
+
+    // ── 劫持进度：更新内 HUD（实时，不依赖原生桥）──
+    var origRender=Recv.render_progress;
+    Recv.render_progress=function(report){
+      try{origRender.call(Recv,report);}catch(e){}
+      if(Array.isArray(report)&&report.length){
+        var avg=Math.min(1.0,report.reduce(function(a,b){return a+b;},0)/report.length);
+        setPercent(Math.round(avg*100),report.length);
+        HUD.detail='解码中… '+Math.round(avg*100)+'% · '+report.length+' 流';
+        refreshStatus();
+        // 低频同步原生（约每秒）
+        if(!HUD._lastSync||Date.now()-HUD._lastSync>800){HUD._lastSync=Date.now();syncToNative();}
+      }
+    };
+
+    // ── 劫持错误上报：getUserMedia 是异步 reject，startCamera 的 try/catch 抓不到，
+    //    recv.js 只会把错误写进隐藏的 #errorbox，用户会永远停在"请对准二维码" ──
+    var origSetError=Recv.set_error;
+    Recv.set_error=function(msg){
+      var r; try{ r=origSetError.call(Recv,msg); }catch(e){}
+      console.error('[harness] recv error: '+msg);
+      stopTick(); HUD.phase='boot';
+      setHUDStatus('❌ '+msg);
+      showStartButton('相机启动失败：'+msg);
+      postNative('status',{status:'相机启动失败：'+msg});
+      return r;
+    };
+
+    // ── 劫持每帧的视觉状态刷新：驱动"识别到码才计时 / 丢失则暂停" ──
+    // 引入迟滞消抖 (Hysteresis Debounce) 衰减缓冲区 (1000ms)，消除手抖与屏幕闪烁导致的频繁跳变
+    var origVisual=Recv.update_visual_state;
+
+    Recv.update_visual_state=function(){
+      HUD.lastFrameAt=Date.now();
+      try{origVisual.call(Recv);}catch(e){}
+
+      // 同时触发 JS 二维码扫码器（兼容标准单码与喷泉码 4C）。
+      // 必须包 try/catch：本函数是 recv.js 每帧回调的一环，扫码链路里
+      // atob / decodeURIComponent 遇到畸形码会抛，一旦冒上去解码循环就永久停摆。
+      try{ scanVideoForQR(); }catch(e){ console.warn('[harness] QR scan failed:',e); }
+
+      // 统一判断活性：WASM Cimbar 活性 || UniversalDecoder 活性
+      var isCimbarActive = $('crosshair1').classList.contains('active_xhairs');
+      var isUniversalActive = (window.UniversalDecoder && (Date.now() - UniversalDecoder.lastPacketAt < HOLD_TIMEOUT_MS));
+
+      if (isCimbarActive) {
+        _lastSuccessAt = Date.now();
+      }
+
+      var isActive = isCimbarActive || isUniversalActive;
+      if (isActive) {
+        setLocked(true);
+      } else {
+        // 只有当所有解码模块均超过 1000ms 未解出新包时，才判定为真正移开暂停
+        if (HUD.locked && (Date.now() - _lastSuccessAt > HOLD_TIMEOUT_MS)) {
+          setLocked(false);
+        }
+      }
+    };
+
+    // ── 劫持模式锁定 ──
+    var origSetMode=Recv.setMode;
+    Recv.setMode=function(m){
+      origSetMode.call(Recv,m);
+      if(m>0&&m!==HUD._lastMode){HUD._lastMode=m;setMode(({4:'4C',66:'Bu',67:'Bm',68:'B'})[m]||('#'+m));syncToNative();}
+    };
+
+    // ── 劫持下载 ──
+    Zstd.download_blob=function(name,blob){
+      freezeTimer(); HUD.phase='done'; renderTimer();
+      setFileName(name); refreshStatus();
+      postNative('fileMeta',{name:name,size:blob.size});
+      blob.arrayBuffer().then(function(ab){
+        var u8=new Uint8Array(ab),bin='',CH=0x8000;
+        for(var i=0;i<u8.length;i+=CH) bin+=String.fromCharCode.apply(null,u8.subarray(i,i+CH));
+        postNative('fileComplete',{name:name,size:blob.size,data:btoa(bin)});
+      });
+    };
+
+    await Recv.ww_ready;
+    console.log('[harness] workers ready');
+    if(typeof Sink!=='undefined') Sink.allocate();
+    startCamera();
+  }
+
+  function startCamera(){
+    try{
+      Recv.init_video(document.getElementById('video'));
+      console.log('[harness] init_video ok');
+      hideOverlay();
+      // 相机就绪 ≠ 开始计时：进入 idle，等第一次真正解出数据才起表
+      HUD.phase='idle'; renderTimer(); refreshStatus(); startTick();
+      postNative('cameraStarted',{});
+    }catch(e){
+      console.error('[harness] init_video failed',e);
+      showStartButton('无法启动相机：'+e.message);
+    }
+  }
+
+  // 软复位：清空进度面板与计时、模式回 Auto，相机不断流，立即等待下一次识别。
+  // 原生在关闭"接收完成"预览后调用，页面内也可复用。
+  window.__cfcResetHUD=function(){
+    HUD.accumMs=0; HUD.segStart=0; HUD.locked=false; HUD.detail=''; HUD._lastMode=0; _lastSuccessAt=0;
+    try { if (window.UniversalDecoder) UniversalDecoder.reset(); } catch(e) {}
+    HUD.phase = (HUD.phase==='boot') ? 'boot' : 'idle';
+    setPercent(0,0); setFileName(''); setMode('');
+    try{ if(window.Recv&&Recv.setMode) Recv.setMode(0); }catch(e){}   // 模式回自动探测
+    renderTimer(); refreshStatus(); startTick();
+    return 'ok';
+  };
+
+  // 换文件（TaskID 变化）时的复位。只清 UniversalDecoder 自己的状态是不够的：
+  // 上一个文件收完后 HUD.phase 停在 'done'、accumMs 还留着旧耗时，setLocked 会因
+  // phase==='done' 提前返回，新文件的计时就永远起不了表。走软复位一次性清干净。
+  function beginNewTransfer(){
+    try{ window.__cfcResetHUD(); }catch(e){ console.warn('[harness] reset failed:',e); }
+  }
+
+  // 硬复位：重新加载页面。wasm 未导出解码器 reset，只有重建 Module / Worker /
+  // fountain sink / 相机才能真正回到初始状态，因此手工重置走这条路。
+  window.__cfcHardReset=function(){
+    stopTick();
+    HUD.phase='boot';
+    setHUDStatus('↺ 正在重置…');
+    setTimeout(function(){ location.reload(); },0);
+    return 'ok';
+  };
+
+  // 暴露给原生轮询
+  window.__cfcGetState=function(){
+    return JSON.stringify({percent:HUD.percent,streams:HUD.streams,mode:HUD.mode,
+      fileName:HUD.fileName,status:HUD.status,timerSec:HUD.timerSec,phase:HUD.phase});
+  };
+
+  function hideOverlay(){ var o=$('overlay'); if(o) o.style.display='none'; }
+  function showStartButton(msg){
+    $('overlayText').textContent=msg||'点击开始接收'; $('startBtn').style.display='inline-block';
+    $('overlay').style.display='flex';
+  }
+  document.addEventListener('DOMContentLoaded',function(){
+    // 重试必须整页重载，不能重入 boot()：recv.js 的 init_ww 只清空 _workers 数组
+    // 而不 terminate 旧 worker（每个各带一份 wasm 实例），几个劫持也会逐层叠加，
+    // 且 ww_ready 已 settle 会让 startCamera 抢在新 worker 就绪之前跑。
+    $('startBtn').addEventListener('click',function(){
+      $('startBtn').style.display='none';
+      $('overlayText').textContent='正在重试…';
+      setTimeout(function(){ location.reload(); },0);
+    });
+    $('hudReset').addEventListener('click',function(){ window.__cfcHardReset(); });
+  });
+  setTimeout(function(){if(!_started){setHUDStatus('引擎加载较慢…');}},5000);
+
+  /* ============ 全协议通用解码器 (Basic QR & Fountain QR & Cimbar) ============ */
+  var UniversalDecoder = {
+    PRNG: function(s) { return function() { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; }; },
+    xor: function(a, b) { for (var i = 0; i < a.length; i++) a[i] ^= b[i]; },
+    b2u: function(str) {
+      var b = atob(str), u = new Uint8Array(b.length);
+      for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+      return u;
+    },
+    getDegree: function(L, rng) {
+      if (L <= 1) return 1;
+      var p = rng();
+      if (p < 0.4) return 1;
+      if (p < 0.7) return Math.min(L, 2);
+      if (p < 0.9) return Math.min(L, Math.floor(rng() * 10) + 3);
+      return Math.min(L, Math.floor(rng() * Math.floor(L * 0.5)) + 2);
+    },
+    xorIdxLists: function(a, b) {
+      var res = [], i = 0, j = 0;
+      while (i < a.length && j < b.length) {
+        if (a[i] === b[j]) { i++; j++; }
+        else if (a[i] < b[j]) { res.push(a[i]); i++; }
+        else { res.push(b[j]); j++; }
+      }
+      while (i < a.length) { res.push(a[i]); i++; }
+      while (j < b.length) { res.push(b[j]); j++; }
+      return res;
+    },
+
+    basicState: { tid: '', fileName: '', total: 0, received: {}, count: 0 },
+    fountainState: { tid: '', fileName: '', fileSize: 0, total: 0, solved: {}, queue: [] },
+    lastPacketAt: 0,
+
+    reset: function() {
+      this.basicState = { tid: '', fileName: '', total: 0, received: {}, count: 0 };
+      this.fountainState = { tid: '', fileName: '', fileSize: 0, total: 0, solved: {}, queue: [] };
+      this.lastPacketAt = 0;
+    },
+
+    // 视野里可能出现任何一张陌生二维码，载荷一律当不可信输入看待：
+    // 分派之前必须确认 Base64 段是合法的，否则 b2u 里的 atob 会抛。
+    isB64: function(s) { return typeof s === 'string' && /^[A-Za-z0-9+/]*={0,2}$/.test(s) && s.length % 4 === 0; },
+
+    parseText: function(raw) {
+      if (!raw || typeof raw !== 'string') return false;
+      var parts = raw.split('|');
+      if (parts.length !== 5) return false;
+
+      // 1. 标准单码版判定: TaskID | FileName | TotalFrames | CurrentIndex | Base64Payload
+      // 注意分片是把整串 b64 按定长切开的，单片长度不一定是 4 的倍数，
+      // 所以这里只校验字符集，完整性等拼回整串后再验。
+      if (!isNaN(parts[2]) && !isNaN(parts[3]) && parts[4].indexOf(':') === -1
+          && /^[A-Za-z0-9+/]*={0,2}$/.test(parts[4])) {
+        var total = parseInt(parts[2]), cur = parseInt(parts[3]);
+        if (total > 0 && cur >= 0 && cur < total) {
+          this.handleBasicPacket(parts[0], parts[1], total, cur, parts[4]);
+          return true;
+        }
+      }
+
+      // 2. 喷泉码四码同传判定: TaskID | Seed | TotalChunks | Base64Payload | Meta(FileName:FileSize)
+      if (!isNaN(parts[1]) && !isNaN(parts[2]) && parts[4].indexOf(':') !== -1 && this.isB64(parts[3])) {
+        var seed = parseInt(parts[1]), fTotal = parseInt(parts[2]);
+        if (fTotal > 0 && !isNaN(seed)) {
+          this.handleFountainPacket(parts[0], seed, fTotal, parts[3], parts[4]);
+          return true;
+        }
+      }
+
+      return false;
+    },
+
+    handleBasicPacket: function(tid, fileName, total, cur, b64) {
+      var bs = this.basicState;
+      if (bs.tid !== tid) {
+        beginNewTransfer();   // tid 变了＝换文件，必须连 HUD 一起复位
+        bs = this.basicState; // beginNewTransfer 里的 reset() 换了新对象，重新取引用
+        bs.tid = tid; bs.fileName = fileName; bs.total = total;
+        setFileName(fileName); setMode('标准单码');
+      }
+
+      // 每次成功扫到码都无条件刷新时间戳，保持 UniversalDecoder 活性与连续起表
+      this.lastPacketAt = Date.now();
+      _lastSuccessAt = Date.now();
+      if (!HUD.locked) setLocked(true);
+
+      if (!bs.received[cur]) {
+        bs.received[cur] = b64; bs.count++;
+        var pct = Math.round((bs.count / bs.total) * 100);
+        setPercent(pct, bs.count);
+        HUD.detail = '标准单码: ' + bs.count + '/' + bs.total + ' 帧';
+        refreshStatus();
+
+        if (bs.count >= bs.total) {
+          // 发送端是把整串 Base64 按定长切片的，顺序拼回即还原原串（'=' 只在末尾）
+          var fullB64 = '';
+          for (var i = 0; i < bs.total; i++) fullB64 += (bs.received[i] || '');
+          var u8;
+          try { u8 = this.b2u(fullB64); }
+          catch (e) {
+            // 拼出来不是合法 Base64：整轮作废重收，好过交付一个坏文件
+            console.warn('[harness] basic payload corrupt, restarting:', e);
+            HUD.detail = '数据校验失败，正在重新接收…'; refreshStatus();
+            this.reset();
+            return;
+          }
+          var blob = new Blob([u8], { type: 'application/octet-stream' });
+          Zstd.download_blob(bs.fileName, blob);
+        }
+      }
+    },
+
+    handleFountainPacket: function(tid, seed, total, b64, meta) {
+      var fs = this.fountainState;
+      if (fs.tid !== tid) {
+        beginNewTransfer();   // tid 变了＝换文件，必须连 HUD 一起复位
+        fs = this.fountainState; // beginNewTransfer 里的 reset() 换了新对象，重新取引用
+        fs.tid = tid; fs.total = total;
+        var pMeta = meta.split(':');
+        // 文件名是发送端 encodeURIComponent 过的，但畸形码会让 decodeURIComponent 抛
+        try { fs.fileName = decodeURIComponent(pMeta[0]); }
+        catch (e) { fs.fileName = pMeta[0]; }
+        fs.fileSize = parseInt(pMeta[1]) || 0;
+        setFileName(fs.fileName); setMode('喷泉码 4C');
+      }
+
+      // 每次成功扫到码都无条件刷新时间戳，保持 UniversalDecoder 活性与连续起表
+      this.lastPacketAt = Date.now();
+      _lastSuccessAt = Date.now();
+      if (!HUD.locked) setLocked(true);
+
+      var data = this.b2u(b64);
+      this.processFountainChunk(seed, total, data);
+    },
+
+    processFountainChunk: function(seed, L, data) {
+      var fs = this.fountainState;
+      if (Object.keys(fs.solved).length >= L) return;
+
+      var rng = this.PRNG(seed);
+      var d = Math.min(L, this.getDegree(L, rng));
+      var idxs = [], attempts = 0;
+      while (idxs.length < d && attempts < L * 10) {
+        attempts++;
+        var x = Math.floor(rng() * L);
+        if (idxs.indexOf(x) === -1) idxs.push(x);
+      }
+
+      if (L === 1) {
+        if (!fs.solved[0]) fs.solved[0] = data;
+        this.updateFountainUI();
+        return;
+      }
+
+      var curData = new Uint8Array(data);
+      var curIdxs = idxs.sort(function(a, b){ return a - b; });
+      for (var i = 0; i < curIdxs.length; i++) {
+        var idx = curIdxs[i];
+        if (fs.solved[idx]) { this.xor(curData, fs.solved[idx]); curIdxs.splice(i, 1); i--; }
+      }
+      if (curIdxs.length === 0) return;
+
+      for (var k = 0; k < fs.queue.length; k++) {
+        var item = fs.queue[k];
+        if (curIdxs.length === 0) break;
+        if (item.idxs[0] === curIdxs[0]) {
+          this.xor(curData, item.u8);
+          curIdxs = this.xorIdxLists(curIdxs, item.idxs);
+        } else if (item.idxs[0] > curIdxs[0]) break;
+      }
+
+      if (curIdxs.length > 0) {
+        fs.queue.push({ idxs: curIdxs, u8: curData });
+        fs.queue.sort(function(a, b){ return a.idxs[0] - b.idxs[0]; });
+      }
+
+      var changed = true;
+      while (changed) {
+        changed = false;
+        for (var q = 0; q < fs.queue.length; q++) {
+          var qItem = fs.queue[q];
+          for (var j = 0; j < qItem.idxs.length; j++) {
+            var sIdx = qItem.idxs[j];
+            if (fs.solved[sIdx]) {
+              this.xor(qItem.u8, fs.solved[sIdx]);
+              qItem.idxs.splice(j, 1);
+              j--;
+            }
+          }
+          if (qItem.idxs.length === 1) {
+            var solvedIdx = qItem.idxs[0];
+            if (!fs.solved[solvedIdx]) {
+              fs.solved[solvedIdx] = qItem.u8;
+              fs.queue.splice(q, 1);
+              changed = true;
+              break;
+            }
+          }
+          if (qItem.idxs.length === 0) {
+            fs.queue.splice(q, 1);
+            q--;
+          }
+        }
+      }
+
+      this.updateFountainUI();
+    },
+
+    updateFountainUI: function() {
+      var fs = this.fountainState;
+      var solvedCount = Object.keys(fs.solved).length;
+      var pct = Math.round((solvedCount / fs.total) * 100);
+      setPercent(pct, solvedCount);
+      HUD.detail = '喷泉码: ' + solvedCount + '/' + fs.total + ' 块';
+      refreshStatus();
+      _lastSuccessAt = Date.now();
+      setLocked(true);
+
+      if (solvedCount >= fs.total) {
+        var totalLen = 0;
+        for (var i = 0; i < fs.total; i++) totalLen += fs.solved[i].length;
+        var fullBuf = new Uint8Array(totalLen), offset = 0;
+        for (var j = 0; j < fs.total; j++) {
+          fullBuf.set(fs.solved[j], offset);
+          offset += fs.solved[j].length;
+        }
+        if (fs.fileSize > 0 && fs.fileSize < fullBuf.length) {
+          fullBuf = fullBuf.subarray(0, fs.fileSize);
+        }
+        var blob = new Blob([fullBuf], { type: 'application/octet-stream' });
+        Zstd.download_blob(fs.fileName, blob);
+      }
+    }
+  };
+
+  // 视频帧通用 QR 探针（每帧调用，用于标准单码与喷泉码 4C 自动识别）
+  //
+  // 性能约束：本函数整体跑在主线程上，而 recv.js 也正是在主线程用
+  // requestVideoFrameCallback 往 3 个 worker 投 Cimbar 帧。一次全量扫描
+  // （640×1137 竖屏画布，全帧 + 4 象限）约 145 万像素，足以把主线程占满并
+  // 拖垮 Cimbar 的投帧节奏，所以下面两道闸门都不能省。
+  var QR_SCAN_INTERVAL_MS = 150;   // 频率限制，节省 CPU
+  var QR_CANVAS_MAX_W = 640;
+  var _lastQRScanAt = 0;
+  function scanVideoForQR() {
+    if (typeof jsQR === 'undefined') return;
+
+    // 闸门一：Cimbar 已经在解了就完全不扫。Cimbar 色码不是 QR，此时 5 个区域
+    // 必然全部落空，纯属白烧主线程。HUD._lastMode>0 表示 recv.js 已锁定
+    // B/Bm/Bu/4C 之一；crosshair 亮起表示当前帧刚解出 Cimbar 数据。
+    if (HUD._lastMode > 0) return;
+    var xh = $('crosshair1');
+    if (xh && xh.classList.contains('active_xhairs')) return;
+
+    if (Date.now() - _lastQRScanAt < QR_SCAN_INTERVAL_MS) return;
+    _lastQRScanAt = Date.now();
+
+    var video = $('video');
+    if (!video || video.readyState !== video.HAVE_ENOUGH_DATA) return;
+
+    if (!window._qrCanvas) {
+      window._qrCanvas = document.createElement('canvas');
+      window._qrCtx = window._qrCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    var canvas = window._qrCanvas;
+    var ctx = window._qrCtx;
+
+    var vw = video.videoWidth || 640, vh = video.videoHeight || 480;
+    var w = Math.min(QR_CANVAS_MAX_W, vw);
+    var h = Math.floor(w * (vh / vw));
+    // 只在尺寸真变了时才赋值：给 canvas.width 赋值会重建后备存储并清空画布
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    ctx.drawImage(video, 0, 0, w, h);
+
+    // 半宽/半高取整，避免 getImageData 拿到小数导致象限错位
+    var hw = Math.floor(w / 2), hh = Math.floor(h / 2);
+    var regions = [
+      {x: 0,  y: 0,  w: w,      h: h},
+      {x: 0,  y: 0,  w: hw,     h: hh},
+      {x: hw, y: 0,  w: w - hw, h: hh},
+      {x: 0,  y: hh, w: hw,     h: h - hh},
+      {x: hw, y: hh, w: w - hw, h: h - hh}
+    ];
+
+    // 不能在第一个区域命中后就 break：喷泉码 4C 同屏播 4 个不同的码，
+    // regions[0] 是全帧、几乎总会命中其中一个，一 break 剩下 3 个象限就永远
+    // 扫不到，有效吞吐直接掉到 1/4。参见网页端 airscan-fountain.html 的
+    // regions.forEach —— 它也是 5 个区域全扫。重复 seed 由
+    // processFountainChunk 的幂等路径吸收，多扫一次不会解错。
+    for (var r = 0; r < regions.length; r++) {
+      var reg = regions[r];
+      var imgData = ctx.getImageData(reg.x, reg.y, reg.w, reg.h);
+      var code = jsQR(imgData.data, imgData.width, imgData.height);
+      if (code && code.data) UniversalDecoder.parseText(code.data);
+    }
+  }
+</script>
+
+<script src="cimbar-deps/jsQR.js"></script>
+<script src="cimbar-deps/cimbar_js.2026-01-20T0312.js"></script>
+<script src="cimbar-deps/zstd.2026-01-20T0312.js"></script>
+<script src="cimbar-deps/recv.2026-01-20T0312.js"></script>
+</body>
+</html>

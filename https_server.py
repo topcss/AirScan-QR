@@ -32,9 +32,14 @@ class QRStreamHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(state).encode())
         else: return super().do_GET()
 
+import os
+
+certfile = "cert.pem" if os.path.exists("cert.pem") else "cimbar-deps-start/cert.pem"
+keyfile = "key.pem" if os.path.exists("key.pem") else "cimbar-deps-start/key.pem"
+
 httpd = http.server.HTTPServer(('0.0.0.0', 4443), QRStreamHandler)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-context.load_cert_chain(certfile="cert.pem", keyfile="key.pem")
+context.load_cert_chain(certfile=certfile, keyfile=keyfile)
 httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
 print("🚀 Server: https://0.0.0.0:4443")
 httpd.serve_forever()

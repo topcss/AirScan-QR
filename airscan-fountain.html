@@ -102,7 +102,13 @@ const Utils = {
     // 线性反馈随机数生成器 (确保发送接收同步)
     PRNG: (s) => () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; },
     xor: (a, b) => { for (let i = 0; i < a.length; i++) a[i] ^= b[i]; },
-    u2b: (u8) => btoa(String.fromCharCode.apply(null, u8)),
+    u2b: (u8) => {
+        let bin = '';
+        for (let i = 0; i < u8.length; i += 8192) {
+            bin += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+        }
+        return btoa(bin);
+    },
     b2u: (str) => {
         const b = atob(str);
         const u = new Uint8Array(b.length);
@@ -110,11 +116,12 @@ const Utils = {
         return u;
     },
     getDegree: (L, rng) => {
+        if (L <= 1) return 1;
         const p = rng();
         if (p < 0.4) return 1;
-        if (p < 0.7) return 2;
+        if (p < 0.7) return Math.min(L, 2);
         if (p < 0.9) return Math.min(L, Math.floor(rng() * 10) + 3);
-        return Math.min(L, Math.floor(rng() * L * 0.5) + 2);
+        return Math.min(L, Math.floor(rng() * Math.floor(L * 0.5)) + 2);
     }
 };
 
@@ -144,14 +151,18 @@ async function startSending() {
 
     sender.fileSize = dataU8.length;
     sender.chunks = [];
-    for (let i = 0; i < dataU8.length; i += sender.chunkSize) {
-        let chunk = dataU8.slice(i, i + sender.chunkSize);
-        if (chunk.length < sender.chunkSize) {
-            let padded = new Uint8Array(sender.chunkSize);
-            padded.set(chunk);
-            chunk = padded;
+    if (dataU8.length === 0) {
+        sender.chunks.push(new Uint8Array(sender.chunkSize));
+    } else {
+        for (let i = 0; i < dataU8.length; i += sender.chunkSize) {
+            let chunk = dataU8.slice(i, i + sender.chunkSize);
+            if (chunk.length < sender.chunkSize) {
+                let padded = new Uint8Array(sender.chunkSize);
+                padded.set(chunk);
+                chunk = padded;
+            }
+            sender.chunks.push(chunk);
         }
-        sender.chunks.push(chunk);
     }
 
     sender.tid = Math.random().toString(36).slice(-3).toUpperCase();
@@ -164,6 +175,7 @@ async function startSending() {
 
 function tick() {
     const L = sender.chunks.length;
+    if (L === 0) return;
     const meta = encodeURIComponent(sender.fileName) + ":" + sender.fileSize;
     // 同时更新4个QR
     for (let i = 0; i < 4; i++) {
@@ -171,7 +183,9 @@ function tick() {
         const rng = Utils.PRNG(seed);
         const d = Math.min(L, Utils.getDegree(L, rng));
         const idxs = [];
-        while (idxs.length < d) {
+        let attempts = 0;
+        while (idxs.length < d && attempts < L * 10) {
+            attempts++;
             let x = Math.floor(rng() * L);
             if (!idxs.includes(x)) idxs.push(x);
         }
@@ -277,11 +291,13 @@ function handleFountainPacket(raw) {
 }
 
 function processPacket(seed, L, data) {
-    if (recv.isFinishing) return;
+    if (recv.isFinishing || L <= 0) return;
     const rng = Utils.PRNG(seed);
-    const d = Utils.getDegree(L, rng);
+    const d = Math.min(L, Utils.getDegree(L, rng));
     const idxs = [];
-    while (idxs.length < d) {
+    let attempts = 0;
+    while (idxs.length < d && attempts < L * 10) {
+        attempts++;
         let x = Math.floor(rng() * L);
         if (!idxs.includes(x)) idxs.push(x);
     }

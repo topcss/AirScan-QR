@@ -1,1 +1,17 @@
 lib.html
+.DS_Store
+
+# Xcode & iOS Build Artifacts & User Data
+build/
+**/*.xcodeproj/xcuserdata/
+**/*.xcworkspace/xcuserdata/
+**/*.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings
+*.xcuserdata
+*.xcresult
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.pbxuser
+DerivedData/
+ios-cfc-client/build/
+ios-cfc-client/DerivedData/
