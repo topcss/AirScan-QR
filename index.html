@@ -1,324 +1,2727 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
+
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>跨网传输助手（AirScan-QR）</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
-    <script src="https://unpkg.com/html5-qrcode"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
-        .qr-canvas-wrapper { display: flex; justify-content: center; padding: 20px; background: white; border-radius: 24px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); }
-        canvas#qr-canvas { width: 100% !important; max-width: 350px; height: auto !important; }
-        .dot { width: calc(10% - 4.5px); aspect-ratio: 1; border-radius: 4px; background: #f1f5f9; transition: all 0.2s; }
-        .dot.received { background: #10b981; box-shadow: 0 0 8px rgba(16,185,129,0.3); }
-        .missing-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; padding: 6px; background: #fff1f2; color: #e11d48; border-radius: 10px; font-size: 13px; font-weight: 800; margin: 4px; border: 1px solid #ffe4e6; cursor: pointer; }
-        input[type=range] { -webkit-appearance: none; background: transparent; }
-        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 8px; background: #e2e8f0; border-radius: 4px; }
-        input[type=range]::-webkit-slider-thumb { height: 26px; width: 26px; border-radius: 50%; background: #2563eb; -webkit-appearance: none; margin-top: -9px; border: 2px solid white; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>AirScan-QR</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --bg: #f4f6fb;
+      --card: #ffffff;
+      --ink: #1b2330;
+      --ink2: #5b6478;
+      --mut: #9aa4b8;
+      --line: #e6eaf2;
+      --blue: #3b82f6;
+      --blue2: #2563eb;
+      --purple: #7c5cfc;
+      --green: #16a34a;
+      --red: #ef4444;
+      --amber: #f59e0b;
+      --radius: 18px;
+      --mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    [hidden] { display: none !important; }
+
+    html, body { margin: 0; height: 100%; }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font: 16px/1.55 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* 内容限宽并居中：宽屏下不会拉成一条 */
+    header, main, footer {
+      width: 100%;
+      max-width: 780px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    /* ---------------- 顶部 ---------------- */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 22px;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -.02em;
+    }
+
+    header h1 em { font-style: normal; color: var(--blue); }
+
+    .grow { flex: 1; }
+
+    .seg {
+      display: flex;
+      background: #e9edf5;
+      border-radius: 999px;
+      padding: 4px;
+      gap: 4px;
+    }
+
+    .seg button {
+      border: 0;
+      background: transparent;
+      color: var(--ink2);
+      font: 600 16px/1 system-ui, "Microsoft YaHei", sans-serif;
+      padding: 10px 24px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background .18s, color .18s, box-shadow .18s;
+    }
+
+    .seg button.active {
+      background: #fff;
+      color: var(--ink);
+      box-shadow: 0 2px 8px rgba(23, 38, 70, .12);
+    }
+
+    .seg.lang { background: transparent; padding: 0; gap: 6px; border: 1px solid var(--line); border-radius: 999px; }
+    .seg.lang button { padding: 7px 14px; font-size: 13px; }
+    .seg.lang button.active { box-shadow: none; background: #e8edf7; }
+
+    /* ---------------- 主体 ---------------- */
+    main {
+      flex: 1;
+      display: flex;
+      padding: 0 22px 14px;
+      gap: 18px;
+      min-height: 0;
+    }
+
+    .pane {
+      display: none;
+      flex: 1;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    .pane.active { display: flex; }
+
+    /* 内容超高时滚动，滚动条细一点 */
+    .pane::-webkit-scrollbar { width: 8px; }
+    .pane::-webkit-scrollbar-thumb { background: #d7ddec; border-radius: 4px; }
+    .pane::-webkit-scrollbar-track { background: transparent; }
+
+    /* 大卡片 */
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: 0 10px 30px rgba(23, 38, 70, .07);
+    }
+
+    /* ---------------- 发送端 ---------------- */
+    #dropzone {
+      position: relative;
+      flex: 1;
+      min-height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: text;
+      border: 2px solid var(--line);
+      background: #fff;
+      overflow: hidden;
+    }
+
+    #dropzone:not(.idle) { border-color: transparent; background: #10162a; }
+
+    /* 广播中隐藏文本框，显示条码 */
+    #dropzone:not(.idle) .textpanel { display: none; }
+
+    #dropzone.dragover { border-color: var(--blue); border-style: dashed; background: #eff5ff; }
+
+
+
+    #dropzone:fullscreen {
+      border: 0;
+      border-radius: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+    }
+
+    #dropzone:fullscreen .hint { display: none; }
+
+    #sendCanvas {
+      display: block;
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 300px;
+      height: 300px;
+      background: #fff;
+      border-radius: 4px;
+      pointer-events: none;
+    }
+
+    #dropzone.idle #sendCanvas { display: none; }
+
+    .hint {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      text-align: center;
+      padding: 24px;
+      pointer-events: none;
+    }
+
+    #dropzone:not(.idle) .hint,
+    #camWrap:not(.idle) .hint { display: none; }
+
+    .hint .big {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--ink);
+    }
+
+    .hint small { font-size: 16px; color: var(--mut); }
+
+    /* 文本输入面板 */
+    .textpanel {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      cursor: text;
+    }
+
+    .textpanel[hidden] { display: none; }
+
+    .textpanel textarea {
+      flex: 1;
+      min-height: 110px;
+      resize: none;
+      font: 18px/1.65 system-ui, "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: #fff;
+      border: 0;
+      padding: 22px 24px 8px;
+      outline: none;
+    }
+
+    .textpanel textarea::placeholder { color: #b3bcce; }
+
+    .textpanel .tp-info {
+      padding: 0 24px 14px;
+      font-size: 15px;
+      color: var(--mut);
+    }
+
+    /* 控制行 */
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      padding: 12px 16px;
+    }
+
+    .row label {
+      font-size: 16px;
+      color: var(--ink2);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .row label b {
+      font: 700 18px/1 var(--mono);
+      color: var(--ink);
+      min-width: 2.4em;
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      flex: 1;
+      min-width: 140px;
+      height: 10px;
+      border-radius: 999px;
+      background: #e9edf5;
+      outline: none;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--blue);
+      border: 4px solid #fff;
+      box-shadow: 0 2px 8px rgba(59, 130, 246, .45);
+      cursor: pointer;
+    }
+
+    select {
+      height: 44px;
+      font: 600 16px/1 system-ui, "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: #f2f5fa;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0 12px;
+    }
+
+    /* 按钮 */
+    .actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+
+    /* 次级行：高度统一 44px，字都 16px，垂直居中 */
+    .actions.secondary { gap: 10px; }
+
+    .zoomchip {
+      height: 44px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 14px;
+      border-radius: 12px;
+      background: #eef2f9;
+      color: var(--ink2);
+      font: 600 16px/1 var(--mono);
+    }
+
+    .modepick {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 44px;
+      margin-left: auto;
+      font-size: 16px;
+      color: var(--ink2);
+    }
+
+    .btn {
+      flex: 1 1 0;
+      min-width: 120px;
+      height: 52px;
+      border: 0;
+      border-radius: 14px;
+      padding: 0 18px;
+      font: 700 17px/1 system-ui, "Microsoft YaHei", sans-serif;
+      cursor: pointer;
+      transition: transform .1s, box-shadow .18s, background .18s, opacity .18s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn:active:not(:disabled) { transform: scale(.985); }
+    .btn:disabled { opacity: .45; cursor: default; }
+
+    .btn.primary { background: var(--blue); background-image: linear-gradient(180deg, #4f8ef9, var(--blue2)); color: #fff; box-shadow: 0 8px 20px rgba(37, 99, 235, .28); }
+    .btn.purple { background: var(--purple); background-image: linear-gradient(180deg, #8b6dff, #6b46f5); color: #fff; box-shadow: 0 8px 20px rgba(124, 92, 252, .28); }
+    .btn.ghost { background: #fff; color: var(--ink); box-shadow: 0 3px 12px rgba(23, 38, 70, .09); }
+    .btn.ghost:hover:not(:disabled) { background: #fbfcff; }
+    .btn.bar {
+      flex: 0 0 auto;
+      min-width: 0;
+      height: 44px;
+      padding: 0 20px;
+      font-size: 16px;
+      border-radius: 12px;
+    }
+
+    /* ---------------- 接收端 ---------------- */
+    #camStage {
+      flex: 1;
+      min-height: 300px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #10162a;
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(23, 38, 70, .12);
+      position: relative;
+    }
+
+    #camWrap {
+      position: relative;
+      flex: 0 0 auto;
+      width: 320px;
+      height: 320px;
+      background: transparent;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #cam {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1px;
+      height: 1px;
+      opacity: .01;
+      pointer-events: none;
+    }
+
+    #camView {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      display: block;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    #camView:active { cursor: grabbing; }
+
+    #camWrap.idle #camView { display: none; }
+
+    #camWrap .hint .big { color: #6b7699; font-size: 22px; font-weight: 600; }
+    #camWrap .hint small { color: #4d577a; font-size: 15px; }
+
+    /* 扫描线 */
+    .scan {
+      position: absolute;
+      left: 6%;
+      right: 6%;
+      top: 4%;
+      height: 3px;
+      opacity: 0;
+      pointer-events: none;
+      border-radius: 3px;
+      background: linear-gradient(90deg, transparent, rgba(90, 200, 255, .25) 12%, #9fe6ff 50%, rgba(90, 200, 255, .25) 88%, transparent);
+      box-shadow: 0 0 18px 4px rgba(70, 190, 255, .45);
+    }
+
+    #camWrap:not(.idle) .scan {
+      opacity: 1;
+      animation: scanY 2.8s ease-in-out infinite alternate;
+    }
+
+    @keyframes scanY { from { top: 4%; } to { top: 94%; } }
+
+    /* 进度统计 */
+    .statcard { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+
+    .stathead {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--ink2);
+    }
+
+    .chip {
+      margin-left: auto;
+      font: 700 15px/1 var(--mono);
+      color: var(--blue2);
+      background: #e8f0ff;
+      border-radius: 999px;
+      padding: 8px 14px;
+    }
+
+    .statline {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 18px;
+      font-size: 16px;
+      line-height: 1.4;
+      color: var(--ink2);
+    }
+
+    .statline b { color: var(--ink); font-family: var(--mono); font-size: 17px; }
+
+    .status {
+      font-size: 16px;
+      color: var(--ink2);
+      min-height: 24px;
+      word-break: break-all;
+    }
+
+    .status b { color: var(--ink); }
+    .status .ok { color: var(--green); }
+    .status .warn { color: var(--amber); }
+    .status .err { color: var(--red); }
+
+    .bars { display: flex; flex-direction: column; gap: 6px; }
+
+    .bar {
+      height: 8px;
+      background: #eaeef6;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar > div {
+      height: 100%;
+      width: 0;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #60a5fa, #22c55e);
+      transition: width .25s linear;
+    }
+
+    .tip { font-size: 14px; color: var(--mut); }
+
+    /* 结果出来后，底部提示让位给结果卡 */
+    .result:not([hidden]) ~ .tip { display: none; }
+
+    /* ---------------- 结果卡 ---------------- */
+    .result {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(88px, 1fr)) auto;
+      align-items: stretch;
+      gap: 1px;
+      background: #dff3e6;
+      border: 1px solid #cfead9;
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .result[hidden] { display: none; }
+
+    .result > div {
+      background: #f2fbf5;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .result label { font-size: 13px; color: #6b8b78; }
+    .result b { font: 700 16px/1.35 var(--mono); color: #14532d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .result .preview .ptxt::-webkit-scrollbar { width: 8px; }
+    .result .preview .ptxt::-webkit-scrollbar-thumb { background: #cfe6d9; border-radius: 4px; }
+    .result .preview .ptxt::-webkit-scrollbar-track { background: transparent; }
+
+    .result > button {
+      border: 0;
+      border-radius: 0;
+      padding: 12px 20px;
+      font: 700 16px/1 system-ui, "Microsoft YaHei", sans-serif;
+      color: #fff;
+      background: var(--green);
+      cursor: pointer;
+    }
+
+    .result .preview {
+      grid-column: 1 / -1;
+      background: #f2fbf5;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .result .preview[hidden] { display: none; }
+
+    .result .preview .prow { display: flex; align-items: center; gap: 10px; }
+    .result .preview .prow label { font-size: 13px; color: #6b8b78; }
+
+    .result .preview button {
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 16px;
+      font: 600 14px/1 system-ui, "Microsoft YaHei", sans-serif;
+      color: #14532d;
+      background: #d7f0e0;
+      cursor: pointer;
+    }
+
+    .result .preview .ptxt {
+      max-height: 52px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      font: 15px/1.55 var(--mono);
+      color: #14532d;
+      background: #fff;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+
+    /* ---------------- 底部 ---------------- */
+    footer {
+      padding: 4px 22px 12px;
+      font: 12px/1 var(--mono);
+      color: var(--mut);
+      text-align: right;
+    }
+
+    /* ---------------- 窄屏 ---------------- */
+    @media (max-width: 760px) {
+      header { padding: 12px 14px; gap: 10px; }
+      header h1 { font-size: 20px; }
+      .seg button { padding: 9px 16px; font-size: 15px; }
+      main { padding: 0 14px 10px; gap: 12px; }
+      .hint .big { font-size: 22px; }
+      .hint small { font-size: 14px; }
+      .btn { padding: 15px 14px; font-size: 16px; }
+      .result { grid-template-columns: 1fr 1fr; }
+      .result > button { grid-column: 1 / -1; padding: 14px; }
+      .statcard { padding: 12px 14px; }
+    }
+
+    @media (max-height: 680px) {
+      .tip { display: none; }
+      .hint small { display: none; }
+    }
+  </style>
 </head>
-<body class="bg-gray-50 min-h-screen text-slate-900 pb-20">
 
-<div class="max-w-xl mx-auto px-4 pt-8">
-    <div class="flex justify-between items-center mb-8">
-        <h1 class="text-2xl font-black text-slate-800 tracking-tighter">QR 传输专家</h1>
-        <div class="bg-gray-200 p-1 rounded-2xl flex text-sm font-bold shadow-inner">
-            <button id="tab-s" onclick="switchTab('send')" class="px-6 py-2 rounded-xl bg-white shadow-sm text-blue-600 transition-all">发送</button>
-            <button id="tab-r" onclick="switchTab('receive')" class="px-6 py-2 rounded-xl text-slate-500 transition-all">接收</button>
-        </div>
+<body>
+
+  <header>
+    <h1>AirScan<em>-QR</em></h1>
+    <span class="grow"></span>
+    <div class="seg">
+      <button class="tab active" data-pane="send" id="tabSend" data-i18n="tabSend">发送</button>
+      <button class="tab" data-pane="recv" id="tabRecv" data-i18n="tabRecv">接收</button>
     </div>
-
-    <div id="panel-send" class="space-y-4">
-        <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
-            <div class="relative">
-                <textarea id="inputText" class="w-full p-5 bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl h-32 focus:border-blue-500 outline-none text-sm" placeholder="输入内容..."></textarea>
-                <div id="fileCard" class="hidden absolute inset-0 bg-white border-2 border-blue-50 flex flex-col items-center justify-center p-4 rounded-2xl">
-                    <p id="f-name" class="text-sm font-bold text-blue-600 text-center px-6 mb-2 w-full break-all"></p>
-                    <button onclick="resetFile()" class="text-xs font-bold text-red-500 underline uppercase">取消文件</button>
-                </div>
-            </div>
-            <div class="mt-4 space-y-4 px-2">
-                <div class="flex items-center justify-between">
-                    <span class="text-xs font-bold text-slate-500">速度: <span id="fpsVal" class="text-blue-600 font-mono">12</span> FPS</span>
-                    <input type="range" id="fpsRange" min="1" max="30" value="12" class="w-1/2" oninput="state.fps=this.value; document.getElementById('fpsVal').innerText=this.value; if(state.isSending) restartTimer();">
-                </div>
-                <div class="flex items-center justify-between">
-                    <span class="text-xs font-bold text-slate-500">单帧: <span id="sizeVal" class="text-indigo-600 font-mono">350</span> BYTE</span>
-                    <input type="range" id="sizeRange" min="200" max="800" step="10" value="350" class="w-1/2" oninput="state.chunkSize=this.value; document.getElementById('sizeVal').innerText=this.value; if(state.isSending) prepareSending(true);">
-                </div>
-            </div>
-            <div class="grid grid-cols-2 gap-4 mt-6">
-                <button onclick="document.getElementById('fileInput').click()" class="py-4 bg-gray-100 rounded-2xl font-bold text-sm">📎 选文件</button>
-                <input type="file" id="fileInput" class="hidden">
-                <button onclick="prepareSending()" class="py-4 bg-blue-600 text-white rounded-2xl font-bold text-sm shadow-xl active:scale-95 transition-all">🚀 开始发送</button>
-            </div>
-        </div>
-        <div id="playerBox" class="hidden bg-white p-6 rounded-[2.5rem] shadow-2xl border border-gray-50">
-            <div class="text-center mb-6">
-                <div class="text-5xl font-mono font-black text-slate-900">
-                    <span id="curFrameNum" class="text-blue-600">0</span><span class="text-gray-200">/</span><span id="totalFrameNum">0</span>
-                </div>
-            </div>
-            <div class="qr-canvas-wrapper"><canvas id="qr-canvas"></canvas></div>
-            <div class="mt-10 space-y-8">
-                <input type="range" id="frameSlider" min="0" max="0" value="0" class="w-full" oninput="manualSeek(this.value)">
-                <div class="flex gap-4">
-                    <button onclick="step(-1)" class="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center">◀</button>
-                    <button id="btnPause" onclick="togglePause()" class="flex-1 bg-slate-900 text-white rounded-2xl font-black uppercase text-sm">暂停 / 播放</button>
-                    <button onclick="step(1)" class="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center">▶</button>
-                </div>
-            </div>
-        </div>
+    <div class="seg lang">
+      <button data-lang="zh" class="active">中文</button>
+      <button data-lang="en">EN</button>
     </div>
+  </header>
 
-    <div id="panel-receive" class="hidden space-y-4">
-        <div class="bg-white p-6 rounded-[2rem] shadow-sm">
-            <div id="reader" class="w-full aspect-square rounded-3xl bg-slate-900 overflow-hidden mb-6 flex items-center justify-center">
-                <p id="readerPlaceholder" class="text-slate-500 text-xs italic">等待启动扫描...</p>
-            </div>
-            <div class="grid grid-cols-2 gap-3 mb-8">
-                <button id="btnScan" onclick="toggleScan()" class="py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg text-sm">📷 摄像头</button>
-                <button id="btnScreen" onclick="toggleScreenScan()" class="py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg text-sm">🖥️ 屏幕录制</button>
-                <button onclick="location.reload()" class="col-span-2 py-3 bg-gray-100 text-slate-500 rounded-2xl font-bold text-xs">重置所有状态</button>
-            </div>
-            <div class="space-y-4">
-                <div id="taskInfo" class="hidden p-4 bg-blue-50 rounded-2xl border border-blue-100">
-                    <p class="text-[10px] font-black text-blue-400 mb-1 uppercase">当前文件名</p>
-                    <p id="recvFileName" class="text-sm font-bold text-blue-800 break-all"></p>
-                </div>
-                <div class="p-5 bg-red-50 rounded-3xl border border-red-100">
-                    <div class="flex justify-between items-center mb-4">
-                        <span class="text-xs font-black text-red-400 uppercase">进度统计</span>
-                        <span id="recvStats" class="bg-red-200 text-red-700 px-3 py-1 rounded-full text-xs font-bold font-mono">0/0</span>
-                    </div>
-                    <div id="missingList" class="flex flex-wrap text-slate-300 text-xs italic">— 待扫码 —</div>
-                </div>
-                <div id="recvGrid" class="flex flex-wrap gap-1.5"></div>
-            </div>
+  <main>
+    <!-- ================= 发送 ================= -->
+    <section class="pane active" id="pane-send">
+      <div class="card idle" id="dropzone">
+        <canvas id="sendCanvas"></canvas>
+
+        <!-- 默认就是这块：直接输入文本 -->
+        <div class="textpanel" id="textPanel">
+          <textarea id="txtInput" data-i18n-ph="txtPlaceholder" placeholder="在这里输入要传的文本…"></textarea>
+          <div class="tp-info"><span id="txtInfo">0</span></div>
         </div>
-        <div id="successCard" class="hidden bg-emerald-600 p-8 rounded-[2.5rem] text-white shadow-2xl text-center">
-            <p id="res-name-full" class="text-xs font-bold opacity-80 mb-6 break-all"></p>
-            <button id="dlBtn" class="w-full py-5 bg-white text-emerald-700 rounded-2xl font-black shadow-lg">立即下载文件</button>
+      </div>
+
+      <div class="card row">
+        <label><span data-i18n="labelFps">帧率</span> <b id="fpsVal">15</b> FPS</label>
+        <input type="range" id="rngFps" min="5" max="20" step="5" value="15">
+        <label><span data-i18n="labelMode">模式</span>
+          <select id="selMode">
+            <option value="68" selected>B</option>
+            <option value="66">Bu</option>
+            <option value="67">Bm</option>
+            <option value="4">4C</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="actions">
+        <button class="btn ghost" id="btnPick" data-i18n="btnPick">选文件</button>
+        <button class="btn primary" id="btnSendText" data-i18n="btnSendText">开始发送</button>
+        <button class="btn ghost" id="btnPause" data-i18n="btnPause" hidden>暂停</button>
+        <button class="btn ghost" id="btnFull" data-i18n="btnFull" hidden>全屏</button>
+        <button class="btn ghost" id="btnBack" data-i18n="btnBack" hidden>重新输入</button>
+      </div>
+
+      <div class="card statcard">
+        <div class="stathead">
+          <span data-i18n="sendStatTitle">发送状态</span>
+          <span class="chip" id="hudSendFrames">0 / ?</span>
         </div>
-    </div>
-</div>
+        <div class="status" id="sendStatus">待机</div>
+      </div>
 
-<script>
-let state = { isSending: false, isPaused: false, frameIdx: 0, chunks: [], fileName: "", fps: 12, chunkSize: 350, timer: null, tid: "", rawData: null, qr: null };
-let recv = { active: false, scanner: null, received: {}, total: 0, tid: "", startTime: 0, fileName: "", stream: null, mode: null };
+      <input type="file" id="fileInput" style="display:none">
+    </section>
 
-window.onload = () => {
-    state.qr = new QRious({ element: document.getElementById('qr-canvas'), size: 350, level: 'L' });
-};
+    <!-- ================= 接收 ================= -->
+    <section class="pane" id="pane-recv">
+      <div id="camStage">
+        <div id="camWrap" class="idle">
+          <video id="cam" playsinline muted autoplay></video>
+          <canvas id="camView"></canvas>
+          <div class="scan"></div>
+          <div class="hint">
+            <p class="big" data-i18n="recvHintBig">等待启动扫描…</p>
+            <small data-i18n="recvHintSmall">选择下面的摄像头或屏幕录制</small>
+          </div>
+        </div>
+      </div>
 
-/* --------- 发送端逻辑 --------- */
-function renderFrame() {
-    if (state.chunks.length === 0) return;
-    const cur = state.frameIdx;
-    document.getElementById('curFrameNum').innerText = cur + 1;
-    document.getElementById('totalFrameNum').innerText = state.chunks.length;
-    document.getElementById('frameSlider').max = state.chunks.length - 1;
-    document.getElementById('frameSlider').value = cur;
-    const payload = [state.tid, state.fileName, state.chunks.length, cur, state.chunks[cur]].join("|");
-    state.qr.value = payload;
-}
+      <div class="actions">
+        <button class="btn primary" id="btnCam" data-i18n="btnCam">摄像头</button>
+        <button class="btn purple" id="btnDisplay" data-i18n="btnDisplay">屏幕录制</button>
+      </div>
 
-function prepareSending(isAuto = false) {
-    if(!isAuto) clearInterval(state.timer);
-    const text = document.getElementById('inputText').value;
-    let b64 = state.rawData || (text ? btoa(unescape(encodeURIComponent(text))) : "");
-    if (!b64) return isAuto ? null : alert("请先输入内容或选择文件");
-    if(!isAuto) {
-        state.tid = Math.random().toString(36).substring(2, 5).toUpperCase();
-        state.frameIdx = 0;
+      <div class="actions secondary">
+        <button class="btn bar ghost" id="btnStop" data-i18n="btnStop" disabled>停止</button>
+        <button class="btn bar ghost" id="btnFlip" data-i18n="btnFlip">切换镜头</button>
+        <button class="btn bar ghost" id="btnResetView" data-i18n="btnResetView" disabled>重置视图</button>
+        <span class="zoomchip" id="zoomLabel">1.0×</span>
+        <label class="modepick">
+          <span data-i18n="labelMode">模式</span>
+          <select id="selRecvMode">
+            <option value="0" selected data-i18n="optAuto">自动</option>
+            <option value="68">B</option>
+            <option value="66">Bu</option>
+            <option value="67">Bm</option>
+            <option value="4">4C</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="card statcard">
+        <div class="stathead">
+          <span data-i18n="recvStatTitle">进度统计</span>
+          <span class="chip" id="hudPct">0%</span>
+        </div>
+
+        <div class="statline">
+          <span><span data-i18n="labelRate">速率</span> <b id="hudRate">--</b></span>
+          <span><span data-i18n="labelEta">剩余</span> <b id="hudEta">--</b></span>
+          <span><span data-i18n="labelMode">模式</span> <b id="hudMode">自动</b></span>
+          <span><span data-i18n="labelFrames">帧数</span> <b id="hudFrames">0</b></span>
+        </div>
+
+        <div class="bars" id="bars"></div>
+
+        <div class="result" id="result" hidden>
+          <div><label data-i18n="rFile">文件</label><b id="rName">--</b></div>
+          <div><label data-i18n="rSize">大小</label><b id="rSize">--</b></div>
+          <div><label data-i18n="rTime">用时</label><b id="rTime">--</b></div>
+          <div><label data-i18n="rRate">平均速率</label><b id="rRate">--</b></div>
+          <button id="btnDownload" data-i18n="btnDownload">下载文件</button>
+
+          <div class="preview" id="preview" hidden>
+            <div class="prow">
+              <label data-i18n="textPreview">文本内容</label>
+              <button id="btnCopy" data-i18n="btnCopy">复制</button>
+            </div>
+            <div class="ptxt" id="previewText"></div>
+          </div>
+        </div>
+
+        <div class="status" id="recvStatus">待机</div>
+        <div class="tip" data-i18n="tip">滚轮缩放 · 拖动移动 · 双击复位</div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span id="buildTag"></span>
+  </footer>
+
+  <!-- ============ 应用逻辑（必须在 wasm glue 之前定义全局 Module） ============ -->
+  <script>
+    "use strict";
+
+    var $ = function (id) { return document.getElementById(id); };
+    /* ==========================================================
+       多语言：中文 / English
+       ========================================================== */
+    var I18N = {
+      zh: {
+        title: 'AirScan-QR · 光链路传输',
+        subtitle: '光链路传输',
+        tabSend: '发送',
+        tabRecv: '接收',
+        sendStatTitle: '发送状态',
+        recvStatTitle: '进度统计',
+
+        sendHintBig: '拖入文件，或点击选择',
+        sendHintSmall: '最大 33 MB · 全程本地',
+        labelFrame: '帧',
+        labelLoop: '轮次',
+        labelMode: '模式',
+        labelFps: '帧率',
+        btnPick: '选择文件',
+        btnSendText: '开始发送',
+        btnBack: '重新输入',
+        btnCancel: '取消',
+        txtPlaceholder: '在这里输入要传的文本…',
+        txtCounter: '{0} 个字符',
+        textPreview: '文本内容',
+        btnCopy: '复制',
+        copied: '已复制',
+        textSent: '文本已载入，可以开始发送',
+        textFilePrefix: '文本',
+        btnPause: '暂停',
+        btnResume: '继续',
+        btnFull: '全屏',
+        btnExitFull: '退出全屏',
+
+        btnCam: '开启摄像头',
+        btnDisplay: '捕获窗口',
+        btnStop: '停止',
+        btnFlip: '切换镜头',
+        btnResetView: '复位视图',
+        labelDecoded: '已解码',
+        labelRate: '速率',
+        labelEta: '剩余',
+        labelSource: '来源',
+        labelFrames: '帧数',
+        recvHintBig: '等待启动扫描…',
+        recvHintSmall: '点下面的「摄像头」或「捕获窗口」',
+        rFile: '文件',
+        rSize: '大小',
+        rTime: '用时',
+        rRate: '平均速率',
+        btnDownload: '下载文件',
+        clickToSave: '点「下载文件」保存',
+        optAuto: '自动',
+        tip: '滚轮缩放 · 拖动移动 · 双击复位',
+
+        idleWaiting: '输入文本或选择文件，然后点「开始发送」',
+        load: '载入',
+        broadcasting: '广播中',
+        paused: '已暂停',
+        readyHint: '已就绪',
+        idle: '待机',
+        scanning: '扫描中 · 等待识别',
+        received: '已收',
+        receiving: '开始接收',
+        decompressing: '解压中…',
+        done: '接收完成',
+        elapsed: '用时',
+        avg: '平均',
+        fullFrame: '整幅',
+        auto: '自动',
+        srcWindow: '窗口',
+        srcCam: '摄像头',
+        stopped: '已停止',
+        modeLocked: '模式已锁定',
+        decodeError: '解码出错',
+        sinkError: '接收线程出错',
+        workerError: '工作线程出错',
+
+        camUnsupported: '这个浏览器不支持摄像头接口',
+        camFailed: '摄像头打开失败',
+        dispUnsupported: '这个浏览器不支持窗口捕获',
+        dispPick: '在弹出的选择框里选发送端那个窗口',
+        dispFailed: '捕获窗口失败（取消也会到这里）',
+
+        sec: '秒',
+        minute: '分'
+      },
+      en: {
+        title: 'AirScan-QR · Optical Data Link',
+        subtitle: 'Optical Data Link',
+        tabSend: 'Send',
+        tabRecv: 'Receive',
+        sendStatTitle: 'Send status',
+        recvStatTitle: 'Progress',
+
+        sendHintBig: 'Drop a file, or click to select',
+        sendHintSmall: 'Up to 33 MB · stays local',
+        labelFrame: 'Frame',
+        labelLoop: 'Loop',
+        labelMode: 'Mode',
+        labelFps: 'FPS',
+        btnPick: 'Choose file',
+        btnSendText: 'Start sending',
+        btnBack: 'Edit again',
+        btnCancel: 'Cancel',
+        txtPlaceholder: 'Type the text to transmit…',
+        txtCounter: '{0} chars',
+        textPreview: 'Text',
+        btnCopy: 'Copy',
+        copied: 'Copied',
+        textSent: 'Text loaded, ready to send',
+        textFilePrefix: 'text',
+        btnPause: 'Pause',
+        btnResume: 'Resume',
+        btnFull: 'Fullscreen',
+        btnExitFull: 'Exit fullscreen',
+
+        btnCam: 'Start camera',
+        btnDisplay: 'Capture window',
+        btnStop: 'Stop',
+        btnFlip: 'Flip camera',
+        btnResetView: 'Reset view',
+        labelDecoded: 'Decoded',
+        labelRate: 'Rate',
+        labelEta: 'ETA',
+        labelSource: 'Source',
+        labelFrames: 'Frames',
+        recvHintBig: 'Waiting to scan…',
+        recvHintSmall: 'Tap Camera or Capture window below',
+        rFile: 'File',
+        rSize: 'Size',
+        rTime: 'Duration',
+        rRate: 'Avg rate',
+        btnDownload: 'Download file',
+        clickToSave: 'Click "Download file" to save',
+        optAuto: 'Auto',
+        tip: 'Scroll to zoom · drag to move · double-click to reset',
+
+        idleWaiting: 'Type text or pick a file, then press Start',
+        load: 'Loaded',
+        broadcasting: 'Broadcasting',
+        paused: 'Paused',
+        readyHint: 'Ready',
+        idle: 'Idle',
+        scanning: 'Scanning · waiting for a lock',
+        received: 'Received',
+        receiving: 'Receiving',
+        decompressing: 'Decompressing…',
+        done: 'Received',
+        elapsed: 'in',
+        avg: 'avg',
+        fullFrame: 'Full',
+        auto: 'AUTO',
+        srcWindow: 'WINDOW',
+        srcCam: 'CAM',
+        stopped: 'Stopped',
+        modeLocked: 'Mode locked',
+        decodeError: 'Decode error',
+        sinkError: 'Receiver error',
+        workerError: 'Worker error',
+
+        camUnsupported: 'Camera API not supported in this browser',
+        camFailed: 'Camera failed to start',
+        dispUnsupported: 'Window capture not supported in this browser',
+        dispPick: 'Pick the sender window in the dialog',
+        dispFailed: 'Window capture failed (cancel also lands here)',
+
+        sec: 's',
+        minute: 'm'
+      }
+    };
+
+    var lang = 'zh';
+
+    function t(key) {
+      var d = I18N[lang] || I18N.zh;
+      return d[key] !== undefined ? d[key] : (I18N.zh[key] !== undefined ? I18N.zh[key] : key);
     }
-    state.fileName = state.fileName || "unnamed_file.txt";
-    state.chunks = [];
-    const size = parseInt(state.chunkSize);
-    for (let i = 0; i < b64.length; i += size) {
-        state.chunks.push(b64.substring(i, i + size));
+
+    // t('x') 里用 {0} {1} {2} 占位
+    function tf(key, a, b, c) {
+      var s = t(key);
+      if (a !== undefined) s = s.replace('{0}', a);
+      if (b !== undefined) s = s.replace('{1}', b);
+      if (c !== undefined) s = s.replace('{2}', c);
+      return s;
     }
-    state.isSending = true;
-    document.getElementById('playerBox').classList.remove('hidden');
-    renderFrame();
-    if(!isAuto) restartTimer();
-}
 
-function restartTimer() {
-    clearInterval(state.timer);
-    state.timer = setInterval(() => {
-        if(state.isPaused) return;
-        state.frameIdx = (state.frameIdx + 1) % state.chunks.length;
-        renderFrame();
-    }, 1000 / state.fps);
-}
-
-/* --------- 接收端逻辑 (核心整合部分) --------- */
-
-// 1. 摄像头扫码
-async function toggleScan() {
-    if(recv.active) { await stopAllScanning(); return; }
-    
-    try {
-        recv.scanner = new Html5Qrcode("reader");
-        await recv.scanner.start({ facingMode: "environment" }, { fps: 25 }, handleDecoded);
-        recv.active = true;
-        recv.mode = 'camera';
-        document.getElementById('btnScan').innerText = "停止扫描";
-    } catch (err) {
-        alert("摄像头启动失败: " + err);
+    function applyI18n() {
+      document.documentElement.lang = (lang === 'zh' ? 'zh-CN' : 'en');
+      document.title = t('title');
+      var phs = document.querySelectorAll('[data-i18n-ph]');
+      for (var p = 0; p < phs.length; p++) {
+        phs[p].placeholder = t(phs[p].getAttribute('data-i18n-ph'));
+      }
+      var nodes = document.querySelectorAll('[data-i18n]');
+      for (var i = 0; i < nodes.length; i++) {
+        nodes[i].textContent = t(nodes[i].getAttribute('data-i18n'));
+      }
+      var btns = document.querySelectorAll('[data-lang]');
+      for (var j = 0; j < btns.length; j++) {
+        btns[j].classList.toggle('active', btns[j].getAttribute('data-lang') === lang);
+      }
     }
-}
 
-// 2. 屏幕扫码 (从附件整合)
-async function toggleScreenScan() {
-    if(recv.active) { await stopAllScanning(); return; }
-
-    try {
-        recv.stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 20 } });
-        recv.active = true;
-        recv.mode = 'screen';
-        document.getElementById('btnScreen').innerText = "停止录屏";
-
-        const video = document.createElement("video");
-        video.srcObject = recv.stream;
-        video.muted = true;
-        await video.play();
-
-        const reader = document.getElementById("reader");
-        reader.innerHTML = "";
-        reader.appendChild(video);
-
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d", { willReadFrequently: true });
-
-        const loop = () => {
-            if(!recv.active || recv.mode !== 'screen') return;
-            if(video.readyState === video.HAVE_ENOUGH_DATA){
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                ctx.drawImage(video, 0, 0);
-                let img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                let code = jsQR(img.data, img.width, img.height);
-                if(code?.data) handleDecoded(code.data);
-            }
-            requestAnimationFrame(loop);
-        };
-        loop();
-        
-        recv.stream.getVideoTracks()[0].onended = () => stopAllScanning();
-
-    } catch (err) {
-        console.error(err);
+    function setLang(next) {
+      lang = (next === 'en') ? 'en' : 'zh';
+      try { localStorage.setItem('airscan.lang', lang); } catch (e) { }
+      applyI18n();
+      try { window.dispatchEvent(new Event('airscan-lang')); } catch (e) { }
+      if (window.CimbarApp) {
+        window.CimbarApp.sender.refreshStatus();
+        window.CimbarApp.receiver.refreshStatus();
+      }
     }
-}
 
-// 3. 通用停止函数
-async function stopAllScanning() {
-    if(recv.scanner) {
-        await recv.scanner.stop();
-        recv.scanner = null;
-    }
-    if(recv.stream) {
-        recv.stream.getTracks().forEach(t => t.stop());
-        recv.stream = null;
-    }
-    recv.active = false;
-    recv.mode = null;
-    document.getElementById('btnScan').innerText = "📷 摄像头";
-    document.getElementById('btnScreen').innerText = "🖥️ 屏幕录制";
-    document.getElementById('reader').innerHTML = '<p class="text-slate-500 text-xs italic">等待启动扫描...</p>';
-}
+    var MODE_NAME = { 68: 'B', 66: 'Bu', 67: 'Bm', 4: '4C' };
+    var SCAN_MODES = [66, 68, 67, 4];   // 自动模式下的轮询顺序（与上游一致）
+    var BUILD_TAG = '2026-11-11 18:20 · 内联 worker'   // 换版本时改这里，方便确认浏览器加载到了新代码
 
-// 4. 通用解码逻辑处理
-function handleDecoded(text) {
-    const p = text.split('|');
-    if(p.length < 5) return;
-    
-    const [tid, fullFileName, total, idx, data] = [p[0], p[1], parseInt(p[2]), parseInt(p[3]), p[4]];
-    
-    // 初始化新任务
-    if(tid !== recv.tid) {
-        recv.tid = tid; recv.total = total; recv.received = {}; recv.startTime = Date.now();
-        recv.fileName = fullFileName;
-        document.getElementById('taskInfo').classList.remove('hidden');
-        document.getElementById('recvFileName').innerText = fullFileName;
-        document.getElementById('recvGrid').innerHTML = '';
-        for(let i=0; i<total; i++) {
-            const d = document.createElement('div'); d.id = `dot-${i}`; d.className = 'dot';
-            document.getElementById('recvGrid').appendChild(d);
+    var App = (function () {
+      var listeners = {};
+
+      return {
+        on: function (name, fn) { listeners[name] = fn; },
+        emit: function (name, arg) { if (listeners[name]) listeners[name](arg); }
+      };
+    })();
+
+    /* ==========================================================
+       发送端：cimbar wasm 编码器（渲染到 canvas，走 WebGL）
+       ========================================================== */
+    var Sender = (function () {
+      var canvas = $('sendCanvas');
+      var ready = false;
+      var interval = 66;      // 1000 / fps
+      var last = 0;
+      var paused = false;
+      var mode = 68;
+      var idealRatio = 1;
+      var frameCount = 0;
+      var cycleLen = 0;       // 一轮（一遍所有 fountain 块）大概多少帧，播完一轮才能学到
+      var pass = 1;           // 当前是第几轮
+      var shakePhase = 0;     // cimbar 的 8px「shake」相位，0..3
+      var streamReady = false; // fountain 流是否已经建好（flush 之后为 true）
+      var compPtr = 0, compLen = 0;
+      var currentFile = null;
+      var loaded = 0;
+      var wakeLock = null;
+
+      function u8(ptr, len) { return new Uint8Array(Module.HEAPU8.buffer, ptr, len); }
+
+      function sizeText(n) {
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' kB';
+        return (n / 1024 / 1024).toFixed(2) + ' MB';
+      }
+
+      function layout() {
+        var zone = canvas.parentElement;
+        var availW = Math.max(200, zone.clientWidth - 24);
+        var availH = Math.max(200, zone.clientHeight - 24);
+        var w = availW;
+        var h = w / idealRatio;
+        if (h > availH) { h = availH; w = h * idealRatio; }
+        canvas.style.width = Math.floor(w) + 'px';
+        canvas.style.height = Math.floor(h) + 'px';
+      }
+
+      function status(extra) {
+        var parts = [];
+        if (currentFile) {
+          parts.push('<b>' + escapeHtml(currentFile.name) + '</b>　' + sizeText(currentFile.size));
+          var pct = currentFile.size ? Math.round(loaded / currentFile.size * 100) : 100;
+          parts.push(t('load') + ' ' + Math.min(pct, 100) + '%');
+          if (paused) parts.push('<span class="warn">' + t('paused') + '</span>');
+          else parts.push('<span class="ok">' + t('broadcasting') + '</span>');
+        } else {
+          parts.push(t('idleWaiting'));
         }
-    }
-    
-    // 填充数据帧
-    if(!recv.received[idx]) {
-        recv.received[idx] = data;
-        const dot = document.getElementById(`dot-${idx}`);
-        if(dot) dot.classList.add('received');
-        updateMissingUI();
-        if(Object.keys(recv.received).length === total) finalize();
-    }
-}
+        if (extra) parts.push(extra);
+        $('sendStatus').innerHTML = parts.join('　·　');
 
-function updateMissingUI() {
-    const missing = [];
-    for(let i=0; i<recv.total; i++) { if(!recv.received[i]) missing.push(i + 1); }
-    document.getElementById('recvStats').innerText = `${Object.keys(recv.received).length}/${recv.total}`;
-    const listEl = document.getElementById('missingList');
-    if(missing.length === 0) listEl.innerHTML = '<span class="text-emerald-500 font-bold">同步完成！</span>';
-    else listEl.innerHTML = missing.map(m => `<span class="missing-chip" onclick="requestFrame(${m-1})">${m}</span>`).join('');
-}
+        // HUD
+        setHud('hudSendFrames', frameCount + ' / ' + (cycleLen || '?'), frameCount > 0);
+        setHud('hudSendPass', '#' + pass, true);
+        setHud('hudSendMode', MODE_NAME[mode], true);
+        setHud('hudSendFps', String(Math.round(1000 / interval)), true);
+      }
 
-function finalize() {
-    stopAllScanning();
-    let b64 = ""; for(let i=0; i<recv.total; i++) b64 += recv.received[i];
-    const blob = new Blob([new Uint8Array(atob(b64).split("").map(c=>c.charCodeAt(0)))]);
-    document.getElementById('successCard').classList.remove('hidden');
-    document.getElementById('res-name-full').innerText = "传输成功: " + recv.fileName;
-    document.getElementById('dlBtn').onclick = () => {
-        const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-        a.download = recv.fileName;
+      // HUD 读数：有值时高亮，没值时灰着
+      function setHud(id, text, live) {
+        var el = $(id);
+        if (!el) return;
+        el.textContent = text;
+        if (live) {
+          el.classList.remove('dim');
+        } else {
+          el.classList.add('dim');
+        }
+      }
+
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"]/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+        });
+      }
+
+      // cimbar 渲染器每画一帧就把「shake」相位推进一格（0 → -8px → 0 → +8px），
+      // 所以画面会来回抖 8 个像素。这里把相位对齐到无位移的那一格：
+      // 若下一帧会画在奇数相位，就多画一次，让最后落在 0 / 2（两者位移都是 0）。
+      //
+      // 关键：只有 _cimbare_render() 真正画了一帧（返回 1）时相位才会前进；
+      // 没有 _fes / 没有 _next 时它返回 0/-1 且不动相位，此时我们不能自己 +1，
+      // 否则和 C++ 侧错位，之后每一帧都会落在奇数相位上（就是「一直在抖」）。
+      function drawFrame() {
+        for (var i = 0; i < 3; i++) {
+          var phaseUsed = shakePhase;
+          var drew = Module._cimbare_render();
+          if (!(drew > 0)) {
+            return false;      // 这一帧没画出来，相位没变
+          }
+          shakePhase = (shakePhase + 1) % 4;
+          if (phaseUsed % 2 === 0) {
+            return true;
+          }
+        }
+        return true;
+      }
+
+      // 量出「码」在画布里的左右边距（像素）：用来判断画面有没有被 shake 推走
+      function edgesOf(fr) {
+        var px = fr.pixels, w = fr.width, h = fr.height;
+        var th = Math.max(4, Math.floor((h / 2) * 0.05));
+        function colBright(c) {
+          var n = 0;
+          for (var y = 0; y < h; y += 2) {
+            var i = (y * w + c) * 4;
+            if (px[i] + px[i + 1] + px[i + 2] > 90) n++;
+          }
+          return n;
+        }
+        var left = -1, right = -1;
+        var lim = Math.min(40, w);
+        for (var c = 0; c < lim; c++) {
+          if (colBright(c) > th) { left = c; break; }
+        }
+        for (var d = 0; d < lim; d++) {
+          if (colBright(w - 1 - d) > th) { right = d; break; }
+        }
+        return { left: left, right: right };
+      }
+
+      function readPixelsRaw() {        var gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+        if (!gl) return null;
+        var w = gl.drawingBufferWidth;
+        var h = gl.drawingBufferHeight;
+        if (!w || !h) return null;
+        var buf = new Uint8Array(w * h * 4);
+        gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+        var row = w * 4;
+        var flipped = new Uint8Array(buf.length);
+        for (var y = 0; y < h; y++) {
+          flipped.set(buf.subarray((h - 1 - y) * row, (h - y) * row), y * row);
+        }
+        return { pixels: flipped, width: w, height: h };
+      }
+
+      function tick(ts) {        window.requestAnimationFrame(tick);
+        if (!ready || !ts) return;
+        if (ts - last < interval) return;
+        last = ts;
+        if (paused || !currentFile) return;
+
+        var fc = Module._cimbare_next_frame(false);
+        if (fc === 1 && frameCount > 1) {
+          // 真正的一轮播完、从头开始：C++ 那边 shake(0) 归零了
+          shakePhase = 0;
+          pass += 1;
+        }
+        // fc === 1 但 frameCount 还是 0，说明这是刚换文件的第一帧：
+        // init_encode 只重置了帧计数，并没有重置 shake，相位保持不变。
+
+        if (fc > 0) {
+          drawFrame();
+          frameCount = fc;
+          if (fc > cycleLen) cycleLen = fc;
+          status();
+        }
+      }
+
+      function applyMode(v) {
+        mode = parseInt(v, 10) || 68;
+        Module._cimbare_configure(mode, -1);
+        // configure 内部只有在已经有 fountain 流（_fes 非空）时才会 shake(0)，
+        // 所以只有那种情况下我们的相位才跟着归零。
+        if (streamReady) {
+          shakePhase = 0;
+        }
+        cycleLen = 0;         // 换模式等于换码率，一轮帧数会变
+        pass = 1;
+        frameCount = 0;
+        idealRatio = Module._cimbare_get_aspect_ratio() || 1;
+        layout();
+      }
+
+      function requestWakeLock() {
+        if (wakeLock || !navigator.wakeLock) return;
+        navigator.wakeLock.request('screen').then(function (lock) {
+          wakeLock = lock;
+          lock.addEventListener('release', function () { wakeLock = undefined; });
+        }).catch(function () { });
+      }
+
+      function importFile(file) {
+        // 返回 Promise：数据全部灌进编码器（并 flush）之后 resolve
+        return new Promise(function (resolve, reject) {
+          if (!ready) { reject(new Error('wasm 还没就绪')); return; }
+
+          currentFile = file;
+          loaded = 0;
+          frameCount = 0;
+          cycleLen = 0;
+          pass = 1;
+          paused = false;
+          streamReady = false;
+          $('dropzone').classList.remove('idle');
+
+          var chunkSize = Module._cimbare_encode_bufsize() * 16;
+          if (compLen < chunkSize) {
+            if (compPtr) Module._free(compPtr);
+            compPtr = Module._malloc(chunkSize);
+            compLen = chunkSize;
+          }
+
+          var fn = new TextEncoder().encode(file.name);
+          var fnPtr = Module._malloc(fn.length);
+          u8(fnPtr, fn.length).set(fn);
+          try {
+            Module._cimbare_init_encode(fnPtr, fn.length, -1);
+          } finally {
+            Module._free(fnPtr);
+          }
+
+          var offset = 0;
+          var reader = new FileReader();
+
+          reader.onerror = function () { reject(new Error('读文件失败')); };
+
+          reader.onload = function (event) {
+            var datalen = event.target.result.byteLength;
+            if (datalen > 0) {
+              u8(compPtr, compLen).set(new Uint8Array(event.target.result));
+              Module._cimbare_encode(compPtr, datalen);   // 1 = 继续喂，0 = 数据够了
+              offset += datalen;
+              loaded = offset;
+              status();
+              readNext();
+            } else {
+              Module._cimbare_encode(compPtr, 0);          // 0 长度 = flush
+              loaded = file.size;
+              frameCount = 0;
+              streamReady = true;
+              status('<span class="ok">' + t('readyHint') + '</span>');
+              requestWakeLock();
+              App.emit('broadcast', true);
+              resolve(file);
+            }
+          };
+
+          function readNext() {
+            reader.readAsArrayBuffer(file.slice(offset, offset + chunkSize));
+          }
+
+          readNext();
+        });
+      }
+
+      return {
+        init: function () {
+          Module._cimbare_init_window(0, 0);
+          applyMode(mode);
+          ready = true;
+          status();
+          window.requestAnimationFrame(tick);
+          App.emit('senderReady');
+        },
+
+        isReady: function () { return ready; },
+
+        refreshStatus: function () { status(); },
+
+        importFile: importFile,
+
+        // 直接把一段文本当作 .txt 文件发出去
+        // 停止广播，回到空白的文本输入
+        reset: function () {
+          paused = true;
+          currentFile = null;
+          // 注意：不要动 streamReady —— C++ 侧的 _fes 还在，
+          // 之后改「模式」时 configure 会 shake(0)，JS 这边要同步归零。
+          frameCount = 0;
+          cycleLen = 0;
+          pass = 1;
+          // 注意：这里不能把 shakePhase 清零 —— C++ 侧的相位并不会被 init_encode 重置，
+          // 清了就会和它错开一格，之后每一帧都会抖 8px。
+          $('dropzone').classList.add('idle');
+          var btn = $('btnPause');
+          if (btn) btn.textContent = t('btnPause');
+          App.emit('broadcast', false);
+          status();
+        },
+
+        importText: function (text) {
+          var bytes = new TextEncoder().encode(text);
+          var d = new Date();
+          var p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+          var stamp = '' + d.getFullYear() + p2(d.getMonth() + 1) + p2(d.getDate()) + '-' +
+            p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds());
+          var name = t('textFilePrefix') + '-' + stamp + '.txt';
+          return importFile(new File([bytes], name, { type: 'text/plain' }));
+        },
+
+        setMode: function (v) {
+          if (!ready) return;
+          applyMode(v);
+          status();
+        },
+
+        setFPS: function (v) {
+          var fps = parseInt(v, 10) || 15;
+          interval = Math.floor(1000 / fps);
+          $('fpsVal').textContent = fps;
+          setHud('hudSendFps', String(fps), true);
+        },
+
+        setPaused: function (p) {
+          paused = !!p;
+          var btn = $('btnPause');
+          btn.textContent = paused ? t('btnResume') : t('btnPause');
+          status();
+        },
+
+        isPaused: function () { return paused; },
+
+        layout: layout,
+
+        // 把卡片（就是那个虚线框）放大到整个屏幕
+        toggleFullscreen: function () {
+          var target = $('dropzone');
+          if (!document.fullscreenElement) {
+            if (!target.requestFullscreen) {
+              return Promise.resolve();
+            }
+            return target.requestFullscreen().then(function () {
+              layout();
+              $('btnFull').textContent = t('btnExitFull');
+            }).catch(function () { });
+          }
+          return document.exitFullscreen().then(function () {
+            layout();
+            $('btnFull').textContent = t('btnFull');
+          }).catch(function () { });
+        },
+
+        // 调试/自检用：把当前 canvas 内容读成 RGBA（readPixels 是自下而上的，这里翻正）
+        grabFrame: function () {
+          if (!ready) return null;
+          drawFrame();
+          return readPixelsRaw();
+        },
+
+        // 只读像素，不触发任何渲染（用来测画面有没有在抖）
+        readPixels: function () {
+          return readPixelsRaw();
+        },
+
+        stats: function () {
+          return { frames: frameCount, cycleLen: cycleLen, pass: pass, shakePhase: shakePhase, mode: mode, streamReady: streamReady };
+        },
+
+        // 自检用：按 tick 的同一条路径连画 n 帧，量「码的左右边缘」有没有移动。
+        // 边缘恒定 = 画面没抖；来回跳 8px = 还在抖。
+        checkStable: function (n) {
+          var frames = Math.max(2, Math.min(30, n || 8));
+          var out = [];
+          for (var i = 0; i < frames; i++) {
+            if (!ready) break;
+            Sender.stepFrame();          // 走和 tick 一样的路径（含轮次重启时的相位归零）
+            var fr = readPixelsRaw();
+            if (!fr) break;
+            var e = edgesOf(fr);
+            out.push(e.left + '/' + e.right);
+          }
+          var stable = out.length > 1 && out.every(function (s) { return s === out[0]; });
+          return { stable: stable, edges: out };
+        },
+
+        stepFrame: function () {
+          if (!ready) return 0;
+          var fc = Module._cimbare_next_frame(false);
+          if (fc === 1 && frameCount > 1) {
+            shakePhase = 0;   // 真正的一轮结束（C++ 侧 shake(0)）
+            pass += 1;
+          }
+          if (fc > 0) {
+            drawFrame();
+            frameCount = fc;
+            if (fc > cycleLen) cycleLen = fc;
+          }
+          return fc;
+        },
+
+        frameCount: function () { return frameCount; }
+      };
+    })();
+
+    /* ----------------------------------------------------------
+       worker 从这里启动：把 <script type="text/plain"> 里的源码
+       换成 Blob URL，再把资源基址替换成绝对路径（blob worker 里
+       相对路径解析不了）。
+       ---------------------------------------------------------- */
+    var WORKER_BASE = (function () {
+      try {
+        return new URL('.', window.location.href).href;
+      } catch (e) {
+        return window.location.origin + '/';
+      }
+    })();
+
+    function makeWorker(scriptId) {
+      var el = document.getElementById(scriptId);
+      if (!el) {
+        throw new Error('missing worker source: ' + scriptId);
+      }
+      var src = el.textContent.split('__CIMBAR_BASE__').join(JSON.stringify(WORKER_BASE));
+      var blob = new Blob([src], { type: 'text/javascript' });
+      var url = URL.createObjectURL(blob);
+      var w = new Worker(url);
+      // 让浏览器可以回收 blob（worker 已在跑）
+      setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+      return w;
+    }
+
+    /* ==========================================================
+       接收端：摄像头 -> scan worker(s) -> sink worker -> 文件
+       ========================================================== */
+    var Receiver = (function () {
+      var video = $('cam');
+      var SCAN_WORKERS = 2;
+
+      var scanWorkers = [];
+      var sinkWorker = null;
+      var workerReady = 0;
+
+      var inflight = 0;
+      var frames = 0;
+      var lockedMode = 0;
+      var cycleIdx = 0;
+      var rr = 0;
+
+      var running = false;
+      var stream = null;
+      var facing = 'environment';
+      var lastVideoTime = -1;
+      var sourceKind = 'camera';     // 'camera' | 'display'（捕获窗口/屏幕）
+      var lastFeedAt = 0;
+      var DISPLAY_FPS = 15;          // 屏幕捕获时主动限速，节省解码算力
+
+      // 取景框（预览 canvas + 视口状态）
+      var camView = $('camView');
+      var vctx = camView.getContext('2d', { willReadFrequently: true });
+      var view = { zoom: 1, cx: 0.5, cy: 0.5 };
+      var MAX_OUT = 1920;            // 取景框输出的最长边
+      var lastFitKey = '';
+
+      var chunks = [];
+      var fileName = '';
+      var expected = 0;
+      var received = 0;
+      var transferring = false;
+      var progressFrac = 0;        // fountain 已解码比例（0..1）
+      var rateSamples = [];        // 最近几秒的采样，用来算速率
+      var transferStartedAt = 0;
+      var RATE_WINDOW = 3000;      // 速率取最近 3 秒的窗口
+
+      var completeCb = null;
+      var lastFile = null;        // 最近一次收到的文件（供结果卡下载）
+      var statusLock = false;     // 完成后锁住状态行，避免被后续进度刷新盖掉
+      var stoppedFlag = false;    // 主动停止后，状态行只显示「已停止」
+      var lastError = '';
+      var dbg = { bytes: 0, bytesLen: 0, progress: [], starts: 0, chunks: 0, ends: 0, misses: 0, drops: 0, lastText: '' };
+
+      function ensureWorkers() {
+        if (sinkWorker) return;
+        sinkWorker = makeWorker('sink-worker-src');
+        sinkWorker.onmessage = function (ev) { onSinkMessage(ev.data); };
+        sinkWorker.onerror = function (e) { recvStatus('<span class="err">' + t('workerError') + ' · sink: ' + e.message + '</span>'); };
+
+        for (var i = 0; i < SCAN_WORKERS; i++) {
+          (function (idx) {
+            var w = makeWorker('scan-worker-src');
+            w.onmessage = function (ev) { onScanMessage(idx, ev.data); };
+            w.onerror = function (e) { recvStatus('<span class="err">' + t('workerError') + ' · scan: ' + e.message + '</span>'); };
+            scanWorkers.push(w);
+          })(i);
+        }
+      }
+
+      function recvStatus(html) {
+        $('recvStatus').innerHTML = html;
+      }
+
+      // 解码命中时给取景框一下绿色闪光
+      var _hitTimer = 0;
+      function flashHit() {
+        var wrap = $('camWrap');
+        if (!wrap || wrap.classList.contains('hit')) {
+          return;
+        }
+        wrap.classList.add('hit');
+        clearTimeout(_hitTimer);
+        _hitTimer = setTimeout(function () { wrap.classList.remove('hit'); }, 160);
+      }
+
+      function statsText(extra) {
+        // HUD 读数
+        var hasProgress = (transferring || progressFrac > 0);
+        var doneState = (statusLock && lastFile);
+
+        if (doneState) {
+          // 完成态：保持 100% 和平均速率，别退回 "--"
+          setHud('hudPct', '100%', true);
+          setHud('hudRate', lastFile.avg > 0 ? rateText(lastFile.avg) : '--', lastFile.avg > 0);
+          setHud('hudEta', '--', false);
+        } else {
+          setHud('hudPct', hasProgress ? Math.round(progressFrac * 100) + '%' : '0%', hasProgress);
+          var r0 = currentRate();
+          setHud('hudRate', r0 > 0 ? rateText(r0) : '--', r0 > 0);
+          var eta = remainingSeconds();
+          setHud('hudEta', eta >= 0 ? etaText(eta) : '--', eta >= 0);
+        }
+        setHud('hudMode', lockedMode ? MODE_NAME[lockedMode] : t('auto'), !!lockedMode);
+        setHud('hudSource', sourceKind === 'display' ? t('srcWindow') : t('srcCam'), running);
+        setHud('hudFrames', String(frames), frames > 0);
+
+        // 底部那行只留关键信息
+        var parts = [];
+        if (hasProgress && expected > 0) {
+          parts.push(t('received') + ' <b>' + sizeText(Math.round(progressFrac * expected)) + '</b> / ' + sizeText(expected));
+        }
+        if (!running && !statusLock && !stoppedFlag) parts.push(t('idle'));
+        if (!transferring && progressFrac >= 0.999) parts.push('<span class="warn">' + t('decompressing') + '</span>');
+        if (extra) parts.push(extra);
+        if (!statusLock) {
+          recvStatus(parts.join('　·　') || t('scanning'));
+        }
+      }
+
+      function setHud(id, text, live) {
+        var el = $(id);
+        if (!el) return;
+        el.textContent = text;
+        if (live) {
+          el.classList.remove('dim');
+        } else {
+          el.classList.add('dim');
+        }
+      }
+
+      function sizeText(n) {
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' kB';
+        return (n / 1024 / 1024).toFixed(2) + ' MB';
+      }
+
+      function feedFrame(pixels, format, width, height) {
+        if (!scanWorkers.length) return false;
+        if (inflight >= 3) return false;   // 队列积压就丢帧，fountain 码不怕丢
+
+        var mode = lockedMode || SCAN_MODES[(cycleIdx++) % SCAN_MODES.length];
+        inflight++;
+        frames++;
+
+        var w = scanWorkers[rr++ % scanWorkers.length];
+        w.postMessage({
+          type: 'frame',
+          pixels: pixels,
+          format: format,
+          width: width,
+          height: height,
+          mode: mode
+        }, [pixels.buffer]);
+        return true;
+      }
+
+      function onScanMessage(idx, d) {
+        if (!d || d.type === 'ready') { workerReady++; return; }
+        inflight--;
+
+        if (d.type === 'bytes') {
+          dbg.bytes++;
+          flashHit();
+          dbg.bytesLen += d.buff.length;
+          // 第一帧的数据块里就带着文件总大小，先记下来，好算速率和剩余时间
+          if (d.size && !expected) {
+            expected = d.size;
+          }
+          if (!lockedMode) {
+            // 第一次成功解码：锁定模式，由 sink 按这个模式构建 fountain 状态
+            lockedMode = d.mode;
+            sinkWorker.postMessage({ type: 'mode', mode: lockedMode });
+            statsText('<span class="ok">' + t('modeLocked') + '</span>');
+          }
+          if (d.mode && d.mode !== lockedMode) return;   // 在途的其它模式帧，丢掉
+          sinkWorker.postMessage({ type: 'bytes', mode: d.mode, buff: d.buff }, [d.buff.buffer]);
+          return;
+        }
+
+        if (d.type === 'miss') { dbg.misses++; dbg.lastText = 'miss ' + d.len; }
+        if (d.type === 'drop') { dbg.drops++; }
+        if (d.type === 'error') {
+          lastError = 'scan: ' + d.msg;
+          recvStatus('<span class="err">' + t('decodeError') + ': ' + d.msg + '</span>');
+        }
+      }
+
+      function onSinkMessage(d) {
+        if (!d) return;
+        dbg.sinkMsgs = (dbg.sinkMsgs || 0) + 1;
+        dbg.sinkTypes = dbg.sinkTypes || {};
+        dbg.sinkTypes[d.type] = (dbg.sinkTypes[d.type] || 0) + 1;
+        if (d.type === 'configured') { dbg.configured = d.mode; return; }
+
+        if (d.type === 'progress') {
+          dbg.progress.push(d.text); if (dbg.progress.length > 6) dbg.progress.shift();
+          onProgress(d.text);
+          return;
+        }
+
+        if (d.type === 'file-start') {
+          dbg.starts++;
+          statusLock = false;
+          transferring = true;
+          chunks = [];
+          fileName = d.name || 'cimbar-download';
+          expected = d.expected || 0;
+          received = 0;
+          statsText('<span class="ok">' + t('receiving') + '</span>');
+          return;
+        }
+
+        if (d.type === 'chunk') {
+          dbg.chunks++;
+          chunks.push(d.buff);
+          received += d.buff.length;
+          statsText();
+          return;
+        }
+
+        if (d.type === 'file-end') {
+          dbg.ends++;
+          transferring = false;
+          var blob = new Blob(chunks, { type: 'application/octet-stream' });
+          var name = d.name || fileName || 'cimbar-download';
+
+          // 文本这类瞬间传完的，用时按 0.1s 下限计，别显示 0.0 秒 / 速率为空
+          var elapsed = Math.max(0.1, transferStartedAt ? (performance.now() - transferStartedAt) / 1000 : 0);
+          var avg = expected ? (expected / elapsed) : 0;
+
+          lastFile = { name: name, blob: blob, size: blob.size, elapsed: elapsed, avg: avg, mode: lockedMode, frames: frames };
+          showResult(lastFile);
+          statusLock = true;
+          recvStatus('<span class="ok">✓ ' + t('done') + ' · ' + t('clickToSave') + '</span>');
+          if (completeCb) completeCb({ name: name, blob: blob, bytes: blob.size, frames: frames, mode: lockedMode, elapsed: elapsed });
+          chunks = [];
+          progressFrac = 0;          // 别让每秒刷新把完成提示盖掉（进度条宽度保持不变）
+          rateSamples = [];
+          setHud('hudPct', '100%', true);
+          return;
+        }
+
+        if (d.type === 'error') {
+          lastError = 'sink: ' + d.msg;
+          recvStatus('<span class="err">' + t('sinkError') + ': ' + d.msg + '</span>');
+        }
+      }
+
+      // 进度条 + 速率 / 剩余时间
+      function onProgress(text) {
+        var arr = null;
+        try { arr = JSON.parse(text); } catch (e) { arr = null; }
+        if (!Array.isArray(arr)) return;
+
+        renderBars(arr);
+
+        var p = 0;
+        for (var i = 0; i < arr.length; i++) {
+          var v = Number(arr[i]) || 0;
+          if (v > p) p = v;
+        }
+        progressFrac = Math.max(0, Math.min(1, p));
+        if (progressFrac > 0 && progressFrac < 1) {
+          statusLock = false;
+        }
+
+        var now = performance.now();
+        if (progressFrac > 0 && !transferStartedAt) {
+          transferStartedAt = now;
+        }
+        // 用「压缩后负载字节数」来算速率，和 fountain 的进度百分比是同一口径
+        rateSamples.push({ t: now, bytes: progressFrac * (expected || 0) });
+        while (rateSamples.length > 2 && now - rateSamples[0].t > RATE_WINDOW) {
+          rateSamples.shift();
+        }
+
+        statsText();
+      }
+
+      function currentRate() {
+        if (rateSamples.length < 2) return 0;
+        var a = rateSamples[0];
+        var b = rateSamples[rateSamples.length - 1];
+        var dt = (b.t - a.t) / 1000;
+        if (dt <= 0.2) return 0;
+        return Math.max(0, (b.bytes - a.bytes) / dt);
+      }
+
+      function remainingSeconds() {
+        var r = currentRate();
+        if (!expected || progressFrac <= 0 || progressFrac >= 1 || r <= 0) return -1;
+        return (expected * (1 - progressFrac)) / r;
+      }
+
+      function rateText(r) {
+        if (!r || r <= 0) return '';
+        if (r < 1024) return Math.round(r) + ' B/s';
+        if (r < 1024 * 1024) return (r / 1024).toFixed(1) + ' kB/s';
+        return (r / 1024 / 1024).toFixed(2) + ' MB/s';
+      }
+
+      function etaText(s) {
+        if (s < 0) return '';
+        if (s < 1) return '< 1 ' + t('sec');
+        if (s < 60) return Math.round(s) + ' ' + t('sec');
+        var m = Math.floor(s / 60);
+        var ss = Math.round(s % 60);
+        return m + ' ' + t('minute') + ' ' + (ss < 10 ? '0' : '') + ss + ' ' + t('sec');
+      }
+
+      function renderBars(arr) {
+        var bars = $('bars');
+        while (bars.children.length < arr.length) {
+          var bar = document.createElement('div');
+          bar.className = 'bar';
+          bar.appendChild(document.createElement('div'));
+          bars.appendChild(bar);
+        }
+        while (bars.children.length > arr.length) {
+          bars.removeChild(bars.lastChild);
+        }
+        for (var i = 0; i < arr.length; i++) {
+          var pct = Math.max(0, Math.min(1, Number(arr[i]) || 0));
+          bars.children[i].firstChild.style.width = (pct * 100).toFixed(1) + '%';
+        }
+      }
+
+      function download(blob, name) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
         a.click();
+        setTimeout(function () { a.remove(); URL.revokeObjectURL(url); }, 2000);
+      }
+
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"]/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+        });
+      }
+
+      function setText(id, txt) {
+        var el = $(id);
+        if (el) el.textContent = txt;
+      }
+
+      // 收到 .txt 就在结果卡里把内容显示出来（限 256 KB，避免卡顿）
+      function maybeShowText(info) {
+        var box = $('preview');
+        var out = $('previewText');
+        if (!box || !out) return;
+        var name = info && info.name ? info.name : '';
+        if (!info || !info.blob || !/\.txt$/i.test(name) || info.blob.size > 256 * 1024) {
+          box.hidden = true;
+          out.textContent = '';
+          return;
+        }
+        info.blob.text().then(function (txt) {
+          out.textContent = txt;
+          box.hidden = false;
+        }).catch(function () {
+          box.hidden = true;
+        });
+      }
+
+      function showResult(info) {
+        if (!info) return;
+        setText('rName', info.name);
+        setText('rSize', sizeText(info.size));
+        setText('rTime', info.elapsed > 0 ? info.elapsed.toFixed(1) + ' ' + t('sec') : '--');
+        setText('rRate', info.avg > 0 ? rateText(info.avg) : '--');
+        var box = $('result');
+        if (box) box.hidden = false;
+        var btn = $('btnDownload');
+        if (btn) btn.disabled = !info.blob;
+        maybeShowText(info);
+      }
+
+      function hideResult() {
+        var box = $('result');
+        if (box) box.hidden = true;
+        var prev = $('preview');
+        if (prev) prev.hidden = true;
+      }
+
+      function resetTransfer() {
+        stoppedFlag = false;
+        lastFile = null;
+        statusLock = false;
+        hideResult();
+        chunks = [];
+        fileName = '';
+        expected = 0;
+        received = 0;
+        transferring = false;
+        lockedMode = 0;
+        cycleIdx = 0;
+        frames = 0;
+        progressFrac = 0;
+        rateSamples = [];
+        transferStartedAt = 0;
+        $('bars').innerHTML = '';
+        if (sinkWorker) sinkWorker.postMessage({ type: 'reset' });
+      }
+
+      function pump() {
+        if (!running) return;
+        if (video.requestVideoFrameCallback) {
+          video.requestVideoFrameCallback(pump);
+        } else {
+          window.requestAnimationFrame(pump);
+        }
+        grabAndFeed();
+      }
+
+      // ---------- 取景框：拖动 / 缩放，只把框内的像素喂给解码器 ----------
+
+      // 当前取景：zoom=1 表示整幅画面，cx/cy 是画面中心点（0..1 归一化）
+      // 取景框的宽高比（现在是正方形，=1）。裁剪必须按「取景框」的比例来，
+      // 否则 16:9 的画面塞进正方形就一定会留黑边，怎么放大都填不满。
+      function containerAspect() {
+        var wrap = $('camWrap');
+        var w = wrap.clientWidth || 1;
+        var h = wrap.clientHeight || 1;
+        return w / h;
+      }
+
+      // zoom=1 时「铺满取景框」对应的裁剪基准尺寸
+      function baseCrop() {
+        var vw = video.videoWidth, vh = video.videoHeight;
+        if (!vw || !vh) return null;
+        var ar = containerAspect();
+        var bh = Math.min(vh, vw / ar);
+        return { ar: ar, h: bh, w: bh * ar, vw: vw, vh: vh };
+      }
+
+      // 缩到最小时刚好能看见整幅画面
+      function zoomMin() {
+        var b = baseCrop();
+        if (!b) return 1;
+        return Math.min(1, Math.min(b.h / b.vh, b.w / b.vw));
+      }
+
+      function clampZoom(z) {
+        var lo = zoomMin();
+        return Math.max(lo, Math.min(16, z || 1));
+      }
+
+      function cropRect() {
+        var b = baseCrop();
+        if (!b) return null;
+        var vw = b.vw, vh = b.vh;
+        var z = clampZoom(view.zoom);
+        view.zoom = z;
+
+        var cw = Math.min(vw, Math.max(64, b.w / z));
+        var ch = Math.min(vh, Math.max(64, b.h / z));
+
+        // 把中心点夹住，别让取景框跑出画面
+        var cx = Math.min(Math.max(view.cx, (cw / 2) / vw), 1 - (cw / 2) / vw);
+        var cy = Math.min(Math.max(view.cy, (ch / 2) / vh), 1 - (ch / 2) / vh);
+        view.cx = cx;
+        view.cy = cy;
+        return { sx: cx * vw - cw / 2, sy: cy * vh - ch / 2, sw: cw, sh: ch };
+      }
+
+      // 取景区是正方形：边长取可用空间的较小值
+      function layoutCam() {
+        var stage = $('camStage');
+        var wrap = $('camWrap');
+        if (!stage) return;
+        var avail = Math.min(stage.clientWidth, stage.clientHeight);
+        var size = Math.max(160, Math.floor(avail));
+        wrap.style.width = size + 'px';
+        wrap.style.height = size + 'px';
+        lastFitKey = '';
+      }
+
+      function fitDisplay() {
+        if (!camView.width || !camView.height) return;
+        var zone = $('camWrap');
+        var aw = Math.max(1, zone.clientWidth);
+        var ah = Math.max(1, zone.clientHeight);
+        var ar = camView.width / camView.height;
+        var w = aw, h = w / ar;
+        if (h > ah) { h = ah; w = h * ar; }
+        camView.style.width = Math.floor(w) + 'px';
+        camView.style.height = Math.floor(h) + 'px';
+      }
+
+      // 把取景框里的画面画到预览 canvas 上（预览 = 喂给解码器的东西，所见即所得）
+      function drawPreview() {
+        var r = cropRect();
+        if (!r) return null;
+        var scale = Math.min(1, MAX_OUT / Math.max(r.sw, r.sh));
+        var ow = Math.max(2, Math.round(r.sw * scale));
+        var oh = Math.max(2, Math.round(r.sh * scale));
+        if (camView.width !== ow || camView.height !== oh) {
+          camView.width = ow;
+          camView.height = oh;
+          lastFitKey = '';
+        }
+        vctx.drawImage(video, r.sx, r.sy, r.sw, r.sh, 0, 0, ow, oh);
+        var key = ow + 'x' + oh + '@' + $('camWrap').clientWidth + 'x' + $('camWrap').clientHeight;
+        if (key !== lastFitKey) {
+          lastFitKey = key;
+          fitDisplay();
+        }
+        return { r: r, ow: ow, oh: oh };
+      }
+
+      function updateZoomLabel() {
+        var z = view.zoom;
+        var label = (Math.abs(z - zoomMin()) < 0.02)
+          ? t('fullFrame')
+          : (Math.round(z * 10) / 10).toFixed(1) + '×';
+        $('zoomLabel').textContent = label;
+        $('btnResetView').disabled = !running;
+      }
+
+      function resetView() {
+        view.zoom = 1;
+        view.cx = 0.5;
+        view.cy = 0.5;
+        updateZoomLabel();
+        if (running) drawPreview();
+      }
+
+      // 以 (clientX, clientY) 为锚点缩放：锚点下的那一点画面保持不动
+      function zoomAt(clientX, clientY, factor) {
+        var vw = video.videoWidth, vh = video.videoHeight;
+        if (!vw || !vh) return;
+        var rect = camView.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+
+        var r0 = cropRect();
+        if (!r0) return;
+        var relX = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+        var relY = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
+        var srcX = r0.sx + relX * r0.sw;
+        var srcY = r0.sy + relY * r0.sh;
+
+        var z1 = clampZoom(view.zoom * factor);
+        var b = baseCrop();
+        var cw1 = Math.min(vw, Math.max(64, b.w / z1));
+        var ch1 = Math.min(vh, Math.max(64, b.h / z1));
+
+        view.zoom = z1;
+        view.cx = (srcX - relX * cw1 + cw1 / 2) / vw;
+        view.cy = (srcY - relY * ch1 + ch1 / 2) / vh;
+
+        updateZoomLabel();
+        drawPreview();
+      }
+
+      function grabAndFeed() {
+        if (video.readyState < 2 || !video.videoWidth) return;
+        if (video.currentTime === lastVideoTime) return;
+
+        // 屏幕/窗口捕获的帧率是刷新率（可能 60fps），限一下速，别把 worker 塞满
+        if (sourceKind === 'display') {
+          var now = performance.now();
+          if (now - lastFeedAt < 1000 / DISPLAY_FPS) return;
+          lastFeedAt = now;
+        }
+
+        lastVideoTime = video.currentTime;
+
+        var drawn = drawPreview();
+        if (!drawn) return;
+
+        // 没缩放、没平移时优先走原生 VideoFrame（保留摄像头原始像素，质量最好）
+        var isFullFrame = Math.abs(drawn.r.sw - video.videoWidth) < 1 &&
+          Math.abs(drawn.r.sh - video.videoHeight) < 1;
+
+        if (isFullFrame && typeof VideoFrame !== 'undefined') {
+          var vf = null;
+          try {
+            vf = new VideoFrame(video, { timestamp: Math.round(performance.now() * 1000) });
+            var width = vf.displayWidth;
+            var height = vf.displayHeight;
+            var params = {};
+            if (vf.format !== 'NV12' && vf.format !== 'I420') {
+              params.format = 'RGBA';
+            }
+            var size = vf.allocationSize(params);
+            var buff = new Uint8Array(size);
+            vf.copyTo(buff, params);
+            var fmt = params.format || vf.format;
+            if (fmt === 'RGBA' && size !== width * height * 4) {
+              fmt = vf.format;   // 兜底
+            }
+            feedFrame(buff, fmt, width, height);
+            return;
+          } catch (e) {
+            console.log(e);
+          } finally {
+            if (vf) vf.close();
+          }
+        }
+
+        // 裁剪/缩放走 canvas（预览 canvas 里就是要解码的画面）
+        var img = vctx.getImageData(0, 0, drawn.ow, drawn.oh);
+        var copy = new Uint8Array(img.data.buffer, img.data.byteOffset, img.data.byteLength);
+        feedFrame(copy, 'RGBA', drawn.ow, drawn.oh);
+      }
+
+      function updateControls() {
+        $('btnCam').disabled = running;
+        $('btnDisplay').disabled = running;
+        $('btnStop').disabled = !running;
+        $('btnFlip').disabled = running && sourceKind !== 'camera';
+        $('btnResetView').disabled = !running;
+      }
+
+      // 摄像头和窗口捕获共用一条取流链路
+      function attachStream(s, kind) {
+        var track = (s.getVideoTracks ? s.getVideoTracks()[0] : null);
+        if (track) {
+          // 用户在浏览器工具条上点「停止共享」
+          track.addEventListener('ended', function () {
+            if (running) {
+              api.stopCamera();
+            }
+          });
+        }
+
+        stream = s;
+        sourceKind = kind;
+        video.srcObject = s;
+
+        return video.play().then(function () {
+          $('camWrap').classList.remove('idle');
+          running = true;
+          stoppedFlag = false;
+          lastVideoTime = -1;
+          lastFeedAt = 0;
+          layoutCam();
+          resetView();
+          updateControls();
+          statsText();
+          pump();
+          return true;
+        });
+      }
+
+      // ---------- 取景框的鼠标 / 触摸操作 ----------
+      (function bindGestures() {
+        var wrap = $('camWrap');
+        var pointers = {};
+        var pinch = null;
+
+        function dist() {
+          var ids = Object.keys(pointers);
+          if (ids.length < 2) return 0;
+          var a = pointers[ids[0]], b = pointers[ids[1]];
+          return Math.hypot(a.x - b.x, a.y - b.y);
+        }
+
+        function center() {
+          var ids = Object.keys(pointers);
+          if (ids.length < 2) return null;
+          var a = pointers[ids[0]], b = pointers[ids[1]];
+          return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        }
+
+        wrap.addEventListener('pointerdown', function (e) {
+          if (!running) return;
+          pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+          try { wrap.setPointerCapture(e.pointerId); } catch (err) { }
+          if (Object.keys(pointers).length === 2) {
+            pinch = { d: dist(), zoom: view.zoom };
+          }
+        });
+
+        wrap.addEventListener('pointermove', function (e) {
+          var p = pointers[e.pointerId];
+          if (!p) return;
+          var dx = e.clientX - p.x;
+          var dy = e.clientY - p.y;
+          p.x = e.clientX;
+          p.y = e.clientY;
+
+          var ids = Object.keys(pointers);
+          if (ids.length >= 2 && pinch) {
+            var d = dist();
+            if (pinch.d > 0 && d > 0) {
+              var mid = { x: (pointers[ids[0]].x + pointers[ids[1]].x) / 2, y: (pointers[ids[0]].y + pointers[ids[1]].y) / 2 };
+              zoomAt(mid.x, mid.y, (pinch.zoom * (d / pinch.d)) / view.zoom);
+            }
+            return;
+          }
+
+          var r = cropRect();
+          var rect = camView.getBoundingClientRect();
+          if (!r || !rect.width || !rect.height) return;
+          // 只有取景框比画面小（任一方向）时才有得拖
+          if (!(r.sw < video.videoWidth - 1 || r.sh < video.videoHeight - 1)) return;
+          view.cx -= dx * (r.sw / rect.width) / video.videoWidth;
+          view.cy -= dy * (r.sh / rect.height) / video.videoHeight;
+          drawPreview();
+        });
+
+        function release(e) {
+          delete pointers[e.pointerId];
+          if (Object.keys(pointers).length < 2) pinch = null;
+        }
+
+        wrap.addEventListener('pointerup', release);
+        wrap.addEventListener('pointercancel', release);
+        wrap.addEventListener('pointerleave', release);
+
+        wrap.addEventListener('wheel', function (e) {
+          if (!running) return;
+          e.preventDefault();
+          zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
+        }, { passive: false });
+
+        wrap.addEventListener('dblclick', function () {
+          if (running) resetView();
+        });
+      })();
+
+      // 窗口/布局变化时保持正方形（切标签、缩放窗口、全屏都会触发）
+      if (typeof ResizeObserver !== 'undefined') {
+        new ResizeObserver(function () {
+          layoutCam();
+          fitDisplay();
+        }).observe($('camStage'));
+      }
+
+      // 每秒刷一次，让速率/剩余时间在丢帧时也能掉下来
+      setInterval(function () {
+        if (running && (transferring || progressFrac > 0)) {
+          statsText();
+        }
+      }, 1000);
+
+      var api = {
+        feedFrame: feedFrame,
+        isRunning: function () { return running; },
+        sourceKind: function () { return sourceKind; },
+
+        startCamera: function () {
+          ensureWorkers();
+          resetTransfer();
+
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            recvStatus('<span class="err">' + t('camUnsupported') + ' (https / localhost)</span>');
+            return Promise.resolve(false);
+          }
+
+          var constraints = {
+            audio: false,
+            video: {
+              facingMode: facing,
+              width: { min: 720, ideal: 1920 },
+              height: { min: 720, ideal: 1080 },
+              frameRate: { ideal: 15 }
+            }
+          };
+
+          return navigator.mediaDevices.getUserMedia(constraints)
+            .then(function (s) { return attachStream(s, 'camera'); })
+            .catch(function (err) {
+              recvStatus('<span class="err">' + t('camFailed') + ': ' + err + '</span>');
+              return false;
+            });
+        },
+
+        // 捕获本机的**别的窗口 / 整个屏幕**：远程桌面、VPN、同机两个浏览器窗口互传都用这个
+        startDisplay: function () {
+          ensureWorkers();
+          resetTransfer();
+
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+            recvStatus('<span class="err">' + t('dispUnsupported') + ' (https / localhost)</span>');
+            return Promise.resolve(false);
+          }
+
+          // 提示用户选「发送端的那个窗口」——窗口模式比整屏模式的码更大、更容易识别
+          recvStatus('<span class="warn">' + t('dispPick') + '</span>');
+
+          var constraints = {
+            audio: false,
+            video: {
+              frameRate: { ideal: DISPLAY_FPS, max: 30 },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
+            }
+          };
+
+          return navigator.mediaDevices.getDisplayMedia(constraints)
+            .then(function (s) { return attachStream(s, 'display'); })
+            .catch(function (err) {
+              recvStatus('<span class="err">' + t('dispFailed') + ': ' + err + '</span>');
+              return false;
+            });
+        },
+
+        stopCamera: function () {
+          running = false;
+          if (stream) {
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            stream = null;
+          }
+          video.srcObject = null;
+          $('camWrap').classList.add('idle');
+          updateControls();
+          statsText('<span class="warn">' + t('stopped') + '</span>');
+        },
+
+        // 取景框（也可以从控制台/测试脚本直接调）
+        resetView: resetView,
+        getView: function () { return { zoom: view.zoom, cx: view.cx, cy: view.cy }; },
+        setView: function (v) {
+          if (!v) return;
+          view.zoom = clampZoom(v.zoom || view.zoom);
+          if (v.cx !== undefined) view.cx = v.cx;
+          if (v.cy !== undefined) view.cy = v.cy;
+          updateZoomLabel();
+          if (running) drawPreview();
+        },
+        // 测试用：把当前取景框内容画出来并返回像素（不喂给解码器）
+        peekCrop: function () {
+          var d = drawPreview();
+          if (!d) return null;
+          return { width: d.ow, height: d.oh, crop: d.r };
+        },
+
+        layout: function () { layoutCam(); fitDisplay(); },
+
+        flipCamera: function () {
+          if (sourceKind !== 'camera') {
+            return Promise.resolve(false);
+          }
+          facing = (facing === 'environment') ? 'user' : 'environment';
+          if (running) {
+            api.stopCamera();
+            return api.startCamera();
+          }
+          return Promise.resolve(false);
+        },
+
+        setOnComplete: function (cb) { completeCb = cb; },
+
+        lastError: function () { return lastError; },
+
+        clearError: function () { lastError = ''; },
+
+        refreshStatus: function (extra) {
+          if (lastFile) showResult(lastFile);
+          if (statusLock) {
+            recvStatus('<span class="ok">✓ ' + t('done') + ' · ' + t('clickToSave') + '</span>');
+          }
+          statsText(extra);
+        },
+
+        lastFile: function () { return lastFile; },
+
+        downloadLast: function () {
+          if (lastFile && lastFile.blob) download(lastFile.blob, lastFile.name);
+        },
+
+        debug: function () { return dbg; },
+
+        // 自检用：拿一张图（RGBA）直接喂进解码链路
+        decodeImage: function (pixels, width, height) {
+          ensureWorkers();
+          return feedFrame(pixels, 'RGBA', width, height);
+        },
+
+        lockMode: function (m) {
+          if (!m) return;
+          lockedMode = m;
+          ensureWorkers();
+          sinkWorker.postMessage({ type: 'mode', mode: m });
+        },
+
+        resetTransfer: resetTransfer
+      };
+
+      return api;
+    })();
+
+    /* ==========================================================
+       UI 绑定
+       ========================================================== */
+    (function bindUI() {
+      var tabs = document.querySelectorAll('.tab');
+      tabs.forEach(function (btn) {
+        btn.onclick = function () {
+          tabs.forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          document.querySelectorAll('.pane').forEach(function (p) { p.classList.remove('active'); });
+          $('pane-' + btn.dataset.pane).classList.add('active');
+
+          if (btn.dataset.pane === 'recv') {
+            Sender.setPaused(true);
+            Receiver.layout();
+          } else {
+            Receiver.stopCamera();
+            Sender.setPaused(false);
+            Sender.layout();
+          }
+        };
+      });
+
+      var zone = $('dropzone');
+      var input = $('fileInput');
+
+      function pick() { input.click(); }
+
+      $('btnPick').onclick = pick;
+
+      input.onchange = function () {
+        var f = input.files && input.files[0];
+        startFile(f);
+        input.value = '';
+      };
+
+      zone.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        zone.classList.add('dragover');
+      });
+      zone.addEventListener('dragleave', function () { zone.classList.remove('dragover'); });
+      zone.addEventListener('drop', function (e) {
+        e.preventDefault();
+        zone.classList.remove('dragover');
+        startFile(e.dataTransfer.files && e.dataTransfer.files[0]);
+      });
+
+      /* ---------- 发送页：文本输入 / 广播 两种状态 ---------- */
+      var textPanel = $('textPanel');
+      var txt = $('txtInput');
+      var sending = false;
+
+      function updateTxtInfo() {
+        $('txtInfo').textContent = tf('txtCounter', txt.value.length);
+        $('btnSendText').disabled = (txt.value.trim().length === 0) || !Sender.isReady();
+      }
+
+      function setSending(on) {
+        sending = !!on;
+        $('dropzone').classList.toggle('idle', !sending);
+        $('btnPause').classList.toggle('primary', sending);
+        $('btnPause').classList.toggle('ghost', !sending);
+        $('btnPick').hidden = sending;
+        $('btnSendText').hidden = sending;
+        $('btnPause').hidden = !sending;
+        $('btnPause').disabled = !sending;
+        $('btnFull').hidden = !sending;
+        $('btnBack').hidden = !sending;
+        if (!sending) {
+          txt.focus();
+        }
+      }
+
+      function startFile(f) {
+        if (!f) return;
+        Sender.importFile(f).then(function () {
+          Sender.setPaused(false);
+          Sender.refreshStatus();
+        }).catch(function (err) {
+          $('sendStatus').innerHTML = '<span class="err">' + err + '</span>';
+        });
+      }
+
+      txt.addEventListener('input', updateTxtInfo);
+
+      $('btnSendText').onclick = function () {
+        var v = txt.value;
+        if (!v.trim()) return;
+        Sender.importText(v).then(function () {
+          Sender.setPaused(false);
+          Sender.refreshStatus();
+        }).catch(function (err) {
+          $('sendStatus').innerHTML = '<span class="err">' + err + '</span>';
+        });
+      };
+
+      // 回到文本输入（停止广播）
+      $('btnBack').onclick = function () {
+        Sender.reset();
+        setSending(false);
+        updateTxtInfo();
+      };
+
+      window.addEventListener('airscan-lang', function () {
+        updateTxtInfo();
+      });
+
+      // 编码器开始/停止广播时，按钮跟着切
+      App.on('broadcast', function (on) { setSending(!!on); });
+
+      /* ---------- 结果卡：复制文本 ---------- */
+      $('btnCopy').onclick = function () {
+        var el = $('previewText');
+        var text = el ? el.textContent : '';
+        var btn = this;
+        var done = function () {
+          btn.textContent = t('copied');
+          setTimeout(function () { btn.textContent = t('btnCopy'); }, 1200);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done).catch(done);
+        } else {
+          done();
+        }
+      };
+
+      $('selMode').onchange = function () {
+        Sender.setMode(this.value);
+      };
+
+      $('rngFps').oninput = function () {
+        Sender.setFPS(this.value);
+      };
+
+      $('btnPause').onclick = function () {
+        Sender.setPaused(!Sender.isPaused());
+      };
+
+      $('btnFull').onclick = function () { Sender.toggleFullscreen(); };
+
+      document.addEventListener('fullscreenchange', function () {
+        $('btnFull').textContent = document.fullscreenElement ? t('btnExitFull') : t('btnFull');
+        Sender.layout();
+      });
+
+      $('btnCam').onclick = function () { Receiver.startCamera(); };
+      $('btnDisplay').onclick = function () { Receiver.startDisplay(); };
+      $('btnStop').onclick = function () { Receiver.stopCamera(); };
+      $('btnFlip').onclick = function () { Receiver.flipCamera(); };
+      $('btnResetView').onclick = function () { Receiver.resetView(); };
+
+      $('btnDownload').onclick = function () {
+        Receiver.downloadLast();
+      };
+
+      $('selRecvMode').onchange = function () {
+        var v = parseInt(this.value, 10) || 0;
+        Receiver.resetTransfer();
+        Receiver.clearError();
+        if (v) {
+          Receiver.lockMode(v);
+        }
+        Receiver.refreshStatus();
+      };
+
+      window.addEventListener('resize', function () {
+        Sender.layout();
+        Receiver.layout();
+      });
+
+      if ($('buildTag')) {
+        $('buildTag').textContent = 'build ' + BUILD_TAG;
+      }
+
+      // 初始：文本框可用，暂停/全屏/重新输入都收起
+      setSending(false);
+      updateTxtInfo();
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function () { Sender.layout(); });
+      }
+    })();
+
+    // 供自动化 / 调试使用
+    window.CimbarApp = {
+      sender: Sender,
+      receiver: Receiver,
+      setLang: setLang,
+      getLang: function () { return lang; }
     };
-}
 
-/* --------- 其他 UI 逻辑 --------- */
-function switchTab(t) {
-    document.getElementById('panel-send').classList.toggle('hidden', t!=='send');
-    document.getElementById('panel-receive').classList.toggle('hidden', t!=='receive');
-    const ts = document.getElementById('tab-s');
-    const tr = document.getElementById('tab-r');
-    if(t === 'send') {
-        ts.className = 'px-6 py-2 rounded-xl bg-white shadow-sm text-blue-600';
-        tr.className = 'px-6 py-2 rounded-xl text-slate-500';
-    } else {
-        tr.className = 'px-6 py-2 rounded-xl bg-white shadow-sm text-blue-600';
-        ts.className = 'px-6 py-2 rounded-xl text-slate-500';
-    }
-}
+    // 语言切换按钮 + 记住上次选择
+    (function initLang() {
+      var btns = document.querySelectorAll('[data-lang]');
+      for (var i = 0; i < btns.length; i++) {
+        btns[i].onclick = function () {
+          setLang(this.getAttribute('data-lang'));
+        };
+      }
+      var saved = 'zh';
+      try {
+        saved = localStorage.getItem('airscan.lang') || 'zh';
+      } catch (e) { }
+      setLang(saved);
+    })();
+  </script>
 
-function requestFrame(i) { if(state.isSending) { state.frameIdx = i; state.isPaused = true; renderFrame(); } }
-function manualSeek(val) { state.frameIdx = parseInt(val); state.isPaused = true; renderFrame(); }
-function step(d) { state.isPaused = true; state.frameIdx = (state.frameIdx + d + state.chunks.length) % state.chunks.length; renderFrame(); }
-function togglePause() { state.isPaused = !state.isPaused; }
-function resetFile() { state.rawData = null; state.fileName = ""; document.getElementById('fileCard').classList.add('hidden'); }
+  <!-- ============ worker 源码（内联，运行时用 Blob URL 启动） ============ -->
+  <script type="text/plain" id="scan-worker-src">
+// cimbar 扫描 worker：一帧图像 -> cimbar 解出若干 fountain 数据块
+// 每个 worker 持有独立的 wasm 实例
 
-document.getElementById('fileInput').onchange = (e) => {
-    const f = e.target.files[0]; if(!f) return;
-    state.fileName = f.name;
-    const r = new FileReader();
-    r.onload = (ev) => {
-        let bin = new Uint8Array(ev.target.result);
-        let s = ''; for(let i=0; i<bin.length; i++) s += String.fromCharCode(bin[i]);
-        state.rawData = btoa(s);
-        document.getElementById('f-name').innerText = f.name;
-        document.getElementById('fileCard').classList.remove('hidden');
-    };
-    r.readAsArrayBuffer(f);
+var Module = {
+  // Blob worker 里 self.location 是 blob:…，相对路径会失效，所以 wasm 走绝对路径
+  locateFile: function (p) { return __CIMBAR_BASE__ + p; },
+  onRuntimeInitialized: function () {
+    _ready = true;
+    self.postMessage({ type: 'ready' });
+  }
 };
+
+var _ready = false;
+
+function u8(ptr, len) {
+  return new Uint8Array(Module.HEAPU8.buffer, ptr, len);
+}
+
+// 每个 fountain 块的前 6 字节是 FountainMetadata：
+//   [0] = (encode_id & 0x7F) | ((size >> 17) & 0x80)
+//   [1..3] = size 的 16/8/0 位，[4..5] = block_id
+// 所以不用等收完，第一帧就能知道这份文件的（压缩后）总大小，用来算速率/剩余时间。
+function readMetaSize(buff) {
+  if (!buff || buff.length < 6) {
+    return 0;
+  }
+  return (buff[3] | (buff[2] << 8) | (buff[1] << 16) | ((buff[0] & 0x80) << 17)) >>> 0;
+}
+
+self.onmessage = function (event) {
+  const d = event.data;
+  if (!d || d.type !== 'frame') {
+    return;
+  }
+  if (!_ready) {
+    self.postMessage({ type: 'drop' });
+    return;
+  }
+
+  const pixels = d.pixels;
+  const format = d.format;
+  const width = d.width;
+  const height = d.height;
+  const mode = d.mode;
+
+  let imgPtr = 0;
+  let fPtr = 0;
+  try {
+    // 自动模式下每一帧的模式都可能不同，所以按帧配置
+    if (mode) {
+      Module._cimbard_configure_decode(mode);
+    }
+
+    const type = format === 'NV12' ? 12 : (format === 'I420' ? 420 : 4);
+
+    imgPtr = Module._malloc(pixels.length);
+    u8(imgPtr, pixels.length).set(pixels);
+
+    const bufSize = Module._cimbard_get_bufsize();
+    fPtr = Module._malloc(bufSize);
+
+    const len = Module._cimbard_scan_extract_decode(imgPtr, width, height, type, fPtr, bufSize);
+    if (len > 0) {
+      const buff = u8(fPtr, len).slice();
+      self.postMessage({ type: 'bytes', mode: mode, buff: buff, size: readMetaSize(buff) }, [buff.buffer]);
+    } else {
+      // len == 0    : 找到了码但没有新数据
+      // len == -3   : 这一帧没提取到码（最常见）
+      self.postMessage({ type: 'miss', len: len });
+    }
+  } catch (err) {
+    self.postMessage({ type: 'error', msg: String(err) });
+  } finally {
+    if (imgPtr) Module._free(imgPtr);
+    if (fPtr) Module._free(fPtr);
+  }
+};
+
+importScripts(__CIMBAR_BASE__ + 'cimbar_js.js');
 </script>
+
+  <script type="text/plain" id="sink-worker-src">
+// cimbar 接收 worker：fountain 数据块 -> 完整文件
+// 与 scan-worker 分开是因为 fountain 解码器的状态不能跟着「自动模式」来回重置
+
+var Module = {
+  // Blob worker 里 self.location 是 blob:…，相对路径会失效，所以 wasm 走绝对路径
+  locateFile: function (p) { return __CIMBAR_BASE__ + p; },
+  onRuntimeInitialized: function () {
+    _ready = true;
+    self.postMessage({ type: 'ready' });
+  }
+};
+
+var _ready = false;
+var _mode = 0;
+
+var _fPtr = 0, _fLen = 0;       // fountain 输入缓冲
+var _errPtr = 0, _errLen = 1024; // 报告 / 文件名缓冲
+var _decPtr = 0, _decLen = 0;    // 解压输出缓冲
+
+function u8(ptr, len) {
+  return new Uint8Array(Module.HEAPU8.buffer, ptr, len);
+}
+
+function allocCommon() {
+  if (!_errPtr) {
+    _errPtr = Module._malloc(_errLen);
+  }
+  if (!_decPtr) {
+    _decLen = Module._cimbard_get_decompress_bufsize();
+    _decPtr = Module._malloc(_decLen);
+  }
+}
+
+function allocFountain() {
+  const need = Module._cimbard_get_bufsize();
+  if (_fPtr && need > _fLen) {
+    Module._free(_fPtr);
+    _fPtr = 0;
+  }
+  if (!_fPtr) {
+    _fLen = need;
+    _fPtr = Module._malloc(_fLen);
+  }
+}
+
+function reportText() {
+  const n = Module._cimbard_get_report(_errPtr, _errLen);
+  if (n <= 0) {
+    return '';
+  }
+  return new TextDecoder().decode(u8(_errPtr, n));
+}
+
+function configure(mode) {
+  Module._cimbard_configure_decode(mode);
+  _mode = mode;
+  allocCommon();
+  allocFountain();
+}
+
+// fountain 解码完成：取文件名，流式解压，边解边发
+// 注意：fountain_decode 返回 BigInt，而 C 接口的 id 参数是 uint32，必须转成 Number
+function assemble(bigId) {
+  const id = Number(bigId);
+  const sizeExpected = Module._cimbard_get_filesize(id);
+
+  let name = 'cimbar-download';
+  const fnLen = Module._cimbard_get_filename(id, _errPtr, _errLen);
+  if (fnLen > 0) {
+    name = new TextDecoder('utf-8').decode(u8(_errPtr, fnLen));
+  }
+
+  self.postMessage({ type: 'file-start', name: name, expected: sizeExpected });
+
+  let total = 0;
+  for (;;) {
+    const n = Module._cimbard_decompress_read(id, _decPtr, _decLen);
+    if (n <= 0) {
+      break;
+    }
+    const chunk = u8(_decPtr, n).slice();
+    total += chunk.length;
+    self.postMessage({ type: 'chunk', buff: chunk }, [chunk.buffer]);
+  }
+
+  self.postMessage({ type: 'file-end', name: name, size: total, expected: sizeExpected });
+}
+
+self.onmessage = function (event) {
+  const d = event.data;
+  if (!d) {
+    return;
+  }
+
+  if (!_ready) {
+    self.postMessage({ type: 'drop' });
+    return;
+  }
+
+  try {
+    if (d.type === 'mode') {
+      configure(d.mode || 68);
+      self.postMessage({ type: 'configured', mode: _mode });
+      return;
+    }
+
+    if (d.type === 'reset') {
+      // 唯一的复位手段：切到别的模式再切回来（C 接口没有单独的 reset）
+      const other = _mode === 68 ? 4 : 68;
+      Module._cimbard_configure_decode(other);
+      Module._cimbard_configure_decode(_mode || 68);
+      allocFountain();
+      self.postMessage({ type: 'configured', mode: _mode });
+      return;
+    }
+
+    if (d.type !== 'bytes') {
+      return;
+    }
+
+    // 模式还没锁定，或者这一块来自别的模式（自动模式切换时的在途帧），丢掉
+    if (!_mode) {
+      configure(d.mode || 68);
+    }
+    if (d.mode && d.mode !== _mode) {
+      return;
+    }
+
+    allocCommon();
+    allocFountain();
+
+    const buff = d.buff;
+    u8(_fPtr, buff.length).set(buff);
+
+    const res = Module._cimbard_fountain_decode(_fPtr, buff.length); // int64_t -> BigInt
+    const resBig = (typeof res === 'bigint') ? res : BigInt(res);
+    const id = BigInt.asUintN(32, resBig);
+
+    const text = reportText();
+    if (text) {
+      self.postMessage({ type: 'progress', text: text });
+    }
+
+    if (resBig > 0n) {
+      assemble(id);
+    }
+  } catch (err) {
+    self.postMessage({ type: 'error', msg: String(err) });
+  }
+};
+
+importScripts(__CIMBAR_BASE__ + 'cimbar_js.js');
+</script>
+
+  <!-- emscripten glue：会用上面定义的全局 Module -->
+  <script>
+    // canvas 必须在 glue 初始化之前挂到 Module 上（GLFW 会用它创建 WebGL 上下文）
+    var Module = {
+      canvas: document.getElementById('sendCanvas'),
+      onRuntimeInitialized: function () {
+        Sender.init();
+        if ($('btnPause')) $('btnPause').disabled = false;
+      }
+    };
+  </script>
+  <script src="cimbar_js.js"></script>
+
 </body>
+
 </html>
